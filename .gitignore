@@ -6,7 +6,8 @@ build/
 *.spec.bak
 .venv/
 venv/
-ffmpeg/
+ffmpeg/*
+!ffmpeg/README.md
 test_output/
 *.mp4
 *.mkv

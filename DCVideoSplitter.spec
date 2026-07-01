@@ -5,18 +5,13 @@ from pathlib import Path
 block_cipher = None
 project_root = Path(SPECPATH)
 
-ffmpeg_datas = []
-ffmpeg_dir = project_root / "ffmpeg"
-for exe in ("ffmpeg.exe", "ffprobe.exe"):
-    p = ffmpeg_dir / exe
-    if p.is_file():
-        ffmpeg_datas.append((str(p), "ffmpeg"))
+# FFmpeg is shipped as dist/DCVideoSplitter/ffmpeg/ (see build.bat), not bundled in _internal.
 
 a = Analysis(
     [str(project_root / "src" / "main.py")],
     pathex=[str(project_root / "src")],
     binaries=[],
-    datas=ffmpeg_datas,
+    datas=[],
     hiddenimports=["customtkinter"],
     hookspath=[],
     hooksconfig={},

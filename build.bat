@@ -31,6 +31,14 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+echo Copying ffmpeg\ to dist\DCVideoSplitter\ffmpeg\ ...
+if exist "dist\DCVideoSplitter\ffmpeg" rmdir /s /q "dist\DCVideoSplitter\ffmpeg"
+mkdir "dist\DCVideoSplitter\ffmpeg"
+copy /y "ffmpeg\ffmpeg.exe" "dist\DCVideoSplitter\ffmpeg\" >nul
+copy /y "ffmpeg\ffprobe.exe" "dist\DCVideoSplitter\ffmpeg\" >nul
+if exist "ffmpeg\README.md" copy /y "ffmpeg\README.md" "dist\DCVideoSplitter\ffmpeg\" >nul
+if exist "ffmpeg\LICENSE.txt" copy /y "ffmpeg\LICENSE.txt" "dist\DCVideoSplitter\ffmpeg\" >nul
+
 echo.
 echo Build complete: dist\DCVideoSplitter\DCVideoSplitter.exe
-echo Zip the dist\DCVideoSplitter folder to share with your friend.
+echo Zip the dist\DCVideoSplitter folder (includes ffmpeg\) to share.

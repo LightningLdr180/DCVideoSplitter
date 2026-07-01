@@ -1,55 +1,52 @@
 # DC Video Splitter
 
-Split and compress gaming videos for Discord uploads. Windows desktop app — pick a video, set a max file size, get numbered clips ready to upload.
+Split and compress gaming videos for Discord. Pick a file, set a max upload size, and get MP4 clips ready to post.
 
-## For you (building)
+**Windows only.**
 
-### Prerequisites
+## Download
 
-- Python 3.9+
-- Windows
+Get the latest **release zip** from [GitHub Releases](https://github.com/LightningLdr180/DCVideoSplitter/releases) and unzip the folder anywhere.
 
-### 1. Download FFmpeg
+Release builds include FFmpeg — you do not need to install it separately. (The source code on GitHub does not include FFmpeg binaries; only the release zip you publish after building does.)
 
-Download a Windows **gpl** static build from [BtbN FFmpeg Builds](https://github.com/BtbN/FFmpeg-Builds/releases) (e.g. `ffmpeg-master-latest-win64-gpl.zip`).
-
-Extract and copy into the `ffmpeg/` folder:
+The zip includes:
 
 ```
-ffmpeg/
-  ffmpeg.exe
-  ffprobe.exe
+DCVideoSplitter/
+  DCVideoSplitter.exe
+  ffmpeg/
+    ffmpeg.exe
+    ffprobe.exe
 ```
 
-### 2. Install dependencies
+Keep `ffmpeg/` next to the `.exe` — the app needs it to run.
 
-```bat
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
+## How to use
 
-### 3. Run in development
+1. Run **DCVideoSplitter.exe**
+2. **Browse** for your video
+3. Choose a **Discord file size limit** (10 / 50 / 500 MB, or custom)
+4. Pick a **processing plan** (split only, HEVC, H.264, AV1, etc.)
+5. Click **Start** (or **Test 15 sec** to try a short clip first)
+6. Upload the files from the output folder
 
-```bat
-python src\main.py
-```
+The app detects your GPU and picks a hardware encoder when possible. Check **GPU & encoders** in the window if something looks wrong.
 
-### 4. Build standalone exe
+## Upgrading FFmpeg
 
-```bat
-build.bat
-```
+FFmpeg is bundled in the `ffmpeg/` folder, not installed system-wide. To use a newer build, download a Windows **gpl** static build from [BtbN FFmpeg Builds](https://github.com/BtbN/FFmpeg-Builds/releases) and replace `ffmpeg.exe` and `ffprobe.exe` in that folder. See [ffmpeg/README.md](ffmpeg/README.md) for details.
 
-Output: `dist\DCVideoSplitter\DCVideoSplitter.exe` (~300 MB folder with bundled FFmpeg)
+## Discord limits (reference)
 
-Zip the entire `dist\DCVideoSplitter\` folder and send it to your friend.
+| Tier | Max upload |
+|------|------------|
+| Regular | 10 MB |
+| Nitro Basic | 50 MB |
+| Nitro | 500 MB |
 
-## For your friend (using)
+The app targets slightly under your chosen limit so uploads are less likely to be rejected.
 
-1. Unzip the folder anywhere
-2. Run `DCVideoSplitter.exe`
-3. Pick a video, set Discord file size limit, click Start
-4. Upload the output files from the output folder
+## Third-party software
 
-No Python or FFmpeg install required.
+Video processing uses [FFmpeg](https://ffmpeg.org/). FFmpeg is licensed under the GPL; source and license text are available from the FFmpeg project and included builds.

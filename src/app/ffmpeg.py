@@ -63,11 +63,11 @@ def ensure_ffmpeg() -> None:
         raise FileNotFoundError(
             f"ffmpeg.exe not found at {ffmpeg_path()}. "
             "Download FFmpeg and place ffmpeg.exe and ffprobe.exe in the ffmpeg/ folder. "
-            "See README.md for instructions."
+            "See ffmpeg/README.md for instructions."
         )
     if not ffprobe_path().is_file():
         raise FileNotFoundError(
-            f"ffprobe.exe not found at {ffprobe_path()}. See README.md for instructions."
+            f"ffprobe.exe not found at {ffprobe_path()}. See ffmpeg/README.md for instructions."
         )
 
 
