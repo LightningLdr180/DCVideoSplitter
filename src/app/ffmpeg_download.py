@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -12,6 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.paths import ffmpeg_dir, ffmpeg_path, ffprobe_path
+
+CREATE_NO_WINDOW = 0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 
 FFMPEG_ASSET_NAME = "ffmpeg-master-latest-win64-gpl.zip"
 FFMPEG_ZIP_URL = (
@@ -28,7 +32,18 @@ def ffmpeg_available() -> bool:
     return ffmpeg_path().is_file() and ffprobe_path().is_file()
 
 
+def _urllib_https_works() -> bool:
+    try:
+        import ssl  # noqa: F401
+    except ImportError:
+        return False
+    handlers = urllib.request.build_opener().handlers
+    return any(handler.__class__.__name__ == "HTTPSHandler" for handler in handlers)
+
+
 def _resolve_download_url() -> str:
+    if not _urllib_https_works():
+        return FFMPEG_ZIP_URL
     try:
         req = urllib.request.Request(
             _GITHUB_API_LATEST,
@@ -46,13 +61,12 @@ def _resolve_download_url() -> str:
     return FFMPEG_ZIP_URL
 
 
-def _download_file(
+def _download_file_urllib(
     url: str,
     dest: Path,
     on_progress: Callable[[str], None] | None = None,
 ) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-
     with urllib.request.urlopen(req, timeout=60) as resp:
         total = int(resp.headers.get("Content-Length", 0) or 0)
         downloaded = 0
@@ -67,9 +81,81 @@ def _download_file(
                 if on_progress and total > 0:
                     pct = min(100, downloaded * 100 // total)
                     on_progress(f"Downloading FFmpeg… {pct}%")
-                elif on_progress and downloaded % (block * 8) == 0:
+                elif on_progress and downloaded and downloaded % (block * 8) == 0:
                     mb = downloaded // (1024 * 1024)
                     on_progress(f"Downloading FFmpeg… {mb} MB")
+
+
+def _download_file_curl(
+    url: str,
+    dest: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> None:
+    if on_progress:
+        on_progress("Downloading FFmpeg… (via curl)")
+    result = subprocess.run(
+        ["curl.exe", "-fL", "--retry", "3", "-o", str(dest), url],
+        capture_output=True,
+        text=True,
+        creationflags=CREATE_NO_WINDOW,
+        timeout=900,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(detail or f"curl failed (exit {result.returncode})")
+
+
+def _download_file_powershell(
+    url: str,
+    dest: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> None:
+    if on_progress:
+        on_progress("Downloading FFmpeg… (via PowerShell)")
+    script = (
+        "$ProgressPreference = 'SilentlyContinue'; "
+        f"Invoke-WebRequest -Uri '{url}' -OutFile '{dest}' -UseBasicParsing"
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        creationflags=CREATE_NO_WINDOW,
+        timeout=900,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(detail or f"PowerShell download failed (exit {result.returncode})")
+
+
+def _download_file(
+    url: str,
+    dest: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> None:
+    if _urllib_https_works():
+        try:
+            _download_file_urllib(url, dest, on_progress)
+            return
+        except urllib.error.URLError as exc:
+            if "unknown url type" not in str(exc).lower():
+                raise
+
+    if sys.platform == "win32":
+        try:
+            _download_file_curl(url, dest, on_progress)
+            return
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            pass
+        _download_file_powershell(url, dest, on_progress)
+        return
+
+    raise RuntimeError(
+        "HTTPS download is not available in this build. "
+        "Install ffmpeg.exe and ffprobe.exe manually into the ffmpeg folder."
+    )
 
 
 def _find_ffmpeg_binaries(root: Path) -> tuple[Path, Path]:
