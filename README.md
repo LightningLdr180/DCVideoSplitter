@@ -4,6 +4,10 @@ Split and compress gaming videos for Discord. Pick a file, set a max upload size
 
 **Windows only.**
 
+## Screenshot
+
+![DC Video Splitter main window](docs/screenshots/main-window.png)
+
 ## Download
 
 Get the latest **release zip** from [GitHub Releases](https://github.com/LightningLdr180/DCVideoSplitter/releases) and unzip the folder anywhere.
