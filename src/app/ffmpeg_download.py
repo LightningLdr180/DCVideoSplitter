@@ -12,7 +12,9 @@ import urllib.request
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Optional
 
+from app.cancel import CancelToken, CancelledError, stop_process
 from app.paths import ffmpeg_dir, ffmpeg_path, ffprobe_path
 
 CREATE_NO_WINDOW = 0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
@@ -65,6 +67,7 @@ def _download_file_urllib(
     url: str,
     dest: Path,
     on_progress: Callable[[str], None] | None = None,
+    cancel: Optional[CancelToken] = None,
 ) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(req, timeout=60) as resp:
@@ -73,6 +76,8 @@ def _download_file_urllib(
         block = 1024 * 256
         with dest.open("wb") as out:
             while True:
+                if cancel is not None:
+                    cancel.check()
                 chunk = resp.read(block)
                 if not chunk:
                     break
@@ -90,26 +95,39 @@ def _download_file_curl(
     url: str,
     dest: Path,
     on_progress: Callable[[str], None] | None = None,
+    cancel: Optional[CancelToken] = None,
 ) -> None:
     if on_progress:
         on_progress("Downloading FFmpeg… (via curl)")
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["curl.exe", "-fL", "--retry", "3", "-o", str(dest), url],
-        capture_output=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         creationflags=CREATE_NO_WINDOW,
-        timeout=900,
-        check=False,
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(detail or f"curl failed (exit {result.returncode})")
+    if cancel is not None:
+        cancel.set_proc(proc)
+    try:
+        _, stderr = proc.communicate(timeout=900)
+        if cancel is not None:
+            cancel.check()
+    except CancelledError:
+        stop_process(proc)
+        raise
+    finally:
+        if cancel is not None:
+            cancel.clear_proc()
+    if proc.returncode != 0:
+        detail = (stderr or "").strip()
+        raise RuntimeError(detail or f"curl failed (exit {proc.returncode})")
 
 
 def _download_file_powershell(
     url: str,
     dest: Path,
     on_progress: Callable[[str], None] | None = None,
+    cancel: Optional[CancelToken] = None,
 ) -> None:
     if on_progress:
         on_progress("Downloading FFmpeg… (via PowerShell)")
@@ -117,27 +135,39 @@ def _download_file_powershell(
         "$ProgressPreference = 'SilentlyContinue'; "
         f"Invoke-WebRequest -Uri '{url}' -OutFile '{dest}' -UseBasicParsing"
     )
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["powershell", "-NoProfile", "-Command", script],
-        capture_output=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         creationflags=CREATE_NO_WINDOW,
-        timeout=900,
-        check=False,
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(detail or f"PowerShell download failed (exit {result.returncode})")
+    if cancel is not None:
+        cancel.set_proc(proc)
+    try:
+        _, stderr = proc.communicate(timeout=900)
+        if cancel is not None:
+            cancel.check()
+    except CancelledError:
+        stop_process(proc)
+        raise
+    finally:
+        if cancel is not None:
+            cancel.clear_proc()
+    if proc.returncode != 0:
+        detail = (stderr or "").strip()
+        raise RuntimeError(detail or f"PowerShell download failed (exit {proc.returncode})")
 
 
 def _download_file(
     url: str,
     dest: Path,
     on_progress: Callable[[str], None] | None = None,
+    cancel: Optional[CancelToken] = None,
 ) -> None:
     if _urllib_https_works():
         try:
-            _download_file_urllib(url, dest, on_progress)
+            _download_file_urllib(url, dest, on_progress, cancel)
             return
         except urllib.error.URLError as exc:
             if "unknown url type" not in str(exc).lower():
@@ -145,11 +175,11 @@ def _download_file(
 
     if sys.platform == "win32":
         try:
-            _download_file_curl(url, dest, on_progress)
+            _download_file_curl(url, dest, on_progress, cancel)
             return
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             pass
-        _download_file_powershell(url, dest, on_progress)
+        _download_file_powershell(url, dest, on_progress, cancel)
         return
 
     raise RuntimeError(
@@ -166,7 +196,10 @@ def _find_ffmpeg_binaries(root: Path) -> tuple[Path, Path]:
     raise FileNotFoundError("ffmpeg.exe and ffprobe.exe not found in the downloaded archive")
 
 
-def download_ffmpeg(on_progress: Callable[[str], None] | None = None) -> None:
+def download_ffmpeg(
+    on_progress: Callable[[str], None] | None = None,
+    cancel: Optional[CancelToken] = None,
+) -> None:
     """Download BtbN win64 GPL FFmpeg and install into ffmpeg/."""
     if ffmpeg_available():
         return
@@ -179,12 +212,16 @@ def download_ffmpeg(on_progress: Callable[[str], None] | None = None) -> None:
         on_progress("Downloading FFmpeg…")
 
     with tempfile.TemporaryDirectory(prefix="dcvs-ffmpeg-") as tmp:
+        if cancel is not None:
+            cancel.check()
         tmp_path = Path(tmp)
         zip_path = tmp_path / FFMPEG_ASSET_NAME
-        _download_file(url, zip_path, on_progress)
+        _download_file(url, zip_path, on_progress, cancel)
 
         if on_progress:
             on_progress("Extracting FFmpeg…")
+        if cancel is not None:
+            cancel.check()
 
         extract_root = tmp_path / "extract"
         extract_root.mkdir()

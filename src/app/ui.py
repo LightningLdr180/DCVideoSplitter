@@ -154,13 +154,18 @@ class App(ctk.CTk):
         self.title("DC Video Splitter")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        self.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
         self.encoder_info: EncoderInfo | None = None
         self._encoders_ready = False
         self.video_info: VideoInfo | None = None
         self.video_path: Path | None = None
         self.processing = False
+        self._closing = False
+        self._ffmpeg_downloading = False
+        self._encoder_probing = False
         self._cancel_token: CancelToken | None = None
+        self._download_cancel: CancelToken | None = None
         self._last_output_dir: Path | None = None
 
         self.limit_mb = tk.DoubleVar(value=500.0)
@@ -179,6 +184,44 @@ class App(ctk.CTk):
 
         self._build_ui()
         self._init_encoders()
+
+    def _background_busy(self) -> bool:
+        return self.processing or self._ffmpeg_downloading or self._encoder_probing
+
+    def _close_busy_message(self) -> str:
+        if self.processing:
+            return "An encoding job is still running."
+        if self._ffmpeg_downloading:
+            return "FFmpeg is still downloading."
+        return "GPU encoders are still being detected."
+
+    def _on_close_request(self) -> None:
+        if self._closing:
+            return
+        if not self._background_busy():
+            self.destroy()
+            return
+        if not messagebox.askyesno(
+            "Cancel and exit?",
+            f"{self._close_busy_message()}\n\n"
+            "Cancel it and close the app?\n\n"
+            "Partial files may remain in the output folder.",
+        ):
+            return
+        self._closing = True
+        if self.processing and self._cancel_token is not None:
+            self._cancel_token.request_cancel()
+            self.status_label.configure(text="Cancelling...")
+        if self._ffmpeg_downloading and self._download_cancel is not None:
+            self._download_cancel.request_cancel()
+            self.status_label.configure(text="Cancelling download...")
+        self._finish_close()
+
+    def _finish_close(self) -> None:
+        if self.processing or self._ffmpeg_downloading:
+            self.after(100, self._finish_close)
+            return
+        self.destroy()
 
     def _section(self, parent: ctk.CTkFrame, title: str) -> ctk.CTkFrame:
         frame = ctk.CTkFrame(parent)
@@ -482,6 +525,7 @@ class App(ctk.CTk):
             return
 
         self._update_gpu_label()
+        self._encoder_probing = True
         threading.Thread(target=self._probe_encoders_worker, daemon=True).start()
 
     def _prompt_ffmpeg_download(self) -> None:
@@ -498,6 +542,8 @@ class App(ctk.CTk):
             self.progress.stop()
             self.progress.configure(mode="indeterminate")
             self.progress.start()
+            self._ffmpeg_downloading = True
+            self._download_cancel = CancelToken()
             threading.Thread(target=self._download_ffmpeg_worker, daemon=True).start()
             return
 
@@ -507,32 +553,57 @@ class App(ctk.CTk):
         self._update_action_buttons()
 
     def _download_ffmpeg_worker(self) -> None:
+        token = self._download_cancel
         try:
 
             def on_progress(msg: str) -> None:
                 self.after(0, lambda m=msg: self._set_status(m, None))
 
-            download_ffmpeg(on_progress)
+            download_ffmpeg(on_progress, cancel=token)
             self.after(0, self._on_ffmpeg_download_done)
+        except CancelledError:
+            self.after(0, self._on_ffmpeg_download_cancelled)
         except Exception as exc:
             self.after(0, lambda e=exc: self._on_ffmpeg_download_failed(e))
 
-    def _on_ffmpeg_download_done(self) -> None:
+    def _clear_ffmpeg_download_state(self) -> None:
+        self._ffmpeg_downloading = False
+        self._download_cancel = None
         self.progress.stop()
         self.progress.configure(mode="determinate")
+
+    def _on_ffmpeg_download_done(self) -> None:
+        self._clear_ffmpeg_download_state()
         self.progress.set(1.0)
         self._log(f"FFmpeg installed in {ffmpeg_dir()}")
         self._set_status("FFmpeg installed.", 1.0)
+        if self._closing:
+            self._finish_close()
+            return
         self._init_encoders()
 
+    def _on_ffmpeg_download_cancelled(self) -> None:
+        self._clear_ffmpeg_download_state()
+        self.progress.set(0)
+        self._log("FFmpeg download cancelled.")
+        self._set_status("FFmpeg download cancelled.", 0)
+        self._encoders_ready = True
+        self.encoder_info = None
+        self._update_gpu_label()
+        self._update_action_buttons()
+        if self._closing:
+            self._finish_close()
+
     def _on_ffmpeg_download_failed(self, exc: BaseException) -> None:
-        self.progress.stop()
-        self.progress.configure(mode="determinate")
+        self._clear_ffmpeg_download_state()
         self.progress.set(0)
         self._encoders_ready = True
         self.encoder_info = None
         msg = _error_message(exc)
         self._log(f"FFmpeg download failed: {msg}")
+        if self._closing:
+            self._finish_close()
+            return
         messagebox.showerror(
             "FFmpeg download failed",
             msg + f"\n\nInstall manually into:\n{ffmpeg_dir()}",
@@ -548,8 +619,12 @@ class App(ctk.CTk):
             self.after(0, lambda e=str(exc): self._finish_encoder_probe(None, e))
 
     def _finish_encoder_probe(self, info: EncoderInfo | None, error: str | None) -> None:
+        self._encoder_probing = False
         self._encoders_ready = True
         self.encoder_info = info
+        if self._closing:
+            self._finish_close()
+            return
         if error:
             messagebox.showerror("Encoder detection failed", error)
         elif info is not None:
@@ -1538,9 +1613,12 @@ class App(ctk.CTk):
             self._log(msg)
         elif not success:
             self._log(msg)
-            messagebox.showerror("Error", _dialog_error(msg))
+            if not self._closing:
+                messagebox.showerror("Error", _dialog_error(msg))
         else:
             self._log(msg)
+        if self._closing:
+            self._finish_close()
 
 
 def run_app() -> None:
