@@ -384,9 +384,13 @@ class App(ctk.CTk):
         self._closing = False
         self._ffmpeg_downloading = False
         self._encoder_probing = False
+        self._probe_cancel: CancelToken | None = None
         self._cancel_token: CancelToken | None = None
         self._download_cancel: CancelToken | None = None
         self._last_output_dir: Path | None = None
+        self._job_output_dir: Path | None = None
+        self._job_output_stem: str | None = None
+        self._job_is_test: bool = False
 
         self.limit_mb = tk.DoubleVar(value=500.0)
         self.custom_limit = tk.StringVar(value="500")
@@ -575,7 +579,7 @@ class App(ctk.CTk):
             "Cancel and exit?",
             f"{self._close_busy_message()}\n\n"
             "Cancel it and close the app?\n\n"
-            "Partial files may remain in the output folder.",
+            "You will be asked whether to delete any partial output files.",
         ):
             return
         self._closing = True
@@ -585,6 +589,9 @@ class App(ctk.CTk):
         if self._ffmpeg_downloading and self._download_cancel is not None:
             self._download_cancel.request_cancel()
             self.status_label.configure(text="Cancelling download...")
+        if self._encoder_probing and self._probe_cancel is not None:
+            self._probe_cancel.request_cancel()
+            self.status_label.configure(text="Cancelling encoder detection…")
         self._finish_close()
 
     def _finish_close(self) -> None:
@@ -916,7 +923,16 @@ class App(ctk.CTk):
 
         self._update_gpu_label()
         self._encoder_probing = True
+        self._probe_cancel = CancelToken()
+        self._set_status("Detecting GPU encoders…", None)
+        self.cancel_btn.configure(state="normal")
         threading.Thread(target=self._probe_encoders_worker, daemon=True).start()
+
+    def _clear_encoder_probe_state(self) -> None:
+        self._encoder_probing = False
+        self._probe_cancel = None
+        self.progress.stop()
+        self.progress.configure(mode="determinate")
 
     def _prompt_ffmpeg_download(self) -> None:
         folder = ffmpeg_dir()
@@ -1002,21 +1018,46 @@ class App(ctk.CTk):
         self._update_action_buttons()
 
     def _probe_encoders_worker(self) -> None:
+        token = self._probe_cancel
+
+        def on_probe(encoder: str) -> None:
+            self.after(
+                0,
+                lambda e=encoder: self._set_status(f"Testing {e}…", None),
+            )
+
         try:
-            info = probe_encoders()
-            self.after(0, lambda: self._finish_encoder_probe(info, None))
+            info = probe_encoders(cancel=token, on_probe=on_probe)
+            self.after(
+                0,
+                lambda i=info: self._finish_encoder_probe(
+                    i, None, cancelled=i.probe_cancelled
+                ),
+            )
         except Exception as exc:
             self.after(0, lambda e=str(exc): self._finish_encoder_probe(None, e))
 
-    def _finish_encoder_probe(self, info: EncoderInfo | None, error: str | None) -> None:
+    def _finish_encoder_probe(
+        self,
+        info: EncoderInfo | None,
+        error: str | None,
+        *,
+        cancelled: bool = False,
+    ) -> None:
         if not self.winfo_exists():
             return
-        self._encoder_probing = False
+        self._clear_encoder_probe_state()
         self._encoders_ready = True
         self.encoder_info = info
         if self._closing:
+            self.cancel_btn.configure(state="disabled")
             self._finish_close()
             return
+        if cancelled and info is not None:
+            self._log(
+                "GPU encoder detection cancelled — using encoders verified so far."
+            )
+            self._set_status("Ready", 0)
         if error:
             messagebox.showerror("Encoder detection failed", error)
         elif info is not None:
@@ -1026,6 +1067,7 @@ class App(ctk.CTk):
             self._on_settings_changed()
         else:
             self._update_action_buttons()
+        self.cancel_btn.configure(state="disabled")
         self.after(50, self._place_window)
 
     def _update_gpu_label(self) -> None:
@@ -1881,9 +1923,59 @@ class App(ctk.CTk):
         self.after(0, lambda m=msg: self._log(m))
 
     def _cancel(self) -> None:
+        if self._encoder_probing and self._probe_cancel is not None:
+            self._probe_cancel.request_cancel()
+            self.status_label.configure(text="Cancelling encoder detection…")
+            return
         if self._cancel_token is not None:
             self._cancel_token.request_cancel()
             self.status_label.configure(text="Cancelling...")
+
+    def _clear_job_output_tracking(self) -> None:
+        self._job_output_dir = None
+        self._job_output_stem = None
+        self._job_is_test = False
+
+    def _offer_partial_cleanup_after_cancel(self) -> str:
+        out_dir = self._job_output_dir
+        stem = self._job_output_stem
+        is_test = self._job_is_test
+        self._clear_job_output_tracking()
+
+        if out_dir is None or stem is None:
+            return "Cancelled."
+        if not output_dir_has_existing_files(out_dir, stem):
+            return "Cancelled."
+
+        if not messagebox.askyesno(
+            "Delete partial files?",
+            (
+                "Encoding was cancelled.\n\n"
+                "Delete partial output files from the output folder?\n\n"
+                "Yes — remove them\n"
+                "No — keep them"
+            ),
+        ):
+            return "Cancelled — partial files kept in the output folder."
+
+        try:
+            removed = (
+                clear_test_outputs(out_dir, stem)
+                if is_test
+                else clear_stem_outputs(out_dir, stem)
+            )
+        except OSError as exc:
+            err = _error_message(exc)
+            if not self._closing:
+                messagebox.showerror(
+                    "Error",
+                    err + "\n\nClose any programs using those files and try again.",
+                )
+            return "Cancelled — could not delete all partial files."
+
+        if removed:
+            return f"Cancelled — removed {removed} partial file(s)."
+        return "Cancelled."
 
     def _start_test(self) -> None:
         self._start(test_clip=True)
@@ -1919,7 +2011,7 @@ class App(ctk.CTk):
         out_path = Path(out)
         stem = self.video_path.stem
         if test_clip:
-            test_stem = test_output_stem(
+            job_output_stem = test_output_stem(
                 stem,
                 self.resolution.get(),  # type: ignore[arg-type]
                 self.video_info.height,
@@ -1928,7 +2020,7 @@ class App(ctk.CTk):
                 self.bitrate_mode.get(),  # type: ignore[arg-type]
             )
             try:
-                clear_test_outputs(out_path, test_stem)
+                clear_test_outputs(out_path, job_output_stem)
             except OSError as exc:
                 messagebox.showerror(
                     "Error",
@@ -1937,9 +2029,9 @@ class App(ctk.CTk):
                 )
                 return
         else:
-            output_stem = stem
+            job_output_stem = stem
             if self.descriptive_filenames.get():
-                output_stem = descriptive_output_stem(
+                job_output_stem = descriptive_output_stem(
                     stem,
                     self.resolution.get(),  # type: ignore[arg-type]
                     self.video_info.height,
@@ -1947,11 +2039,11 @@ class App(ctk.CTk):
                     self.codec.get(),  # type: ignore[arg-type]
                     self.bitrate_mode.get(),  # type: ignore[arg-type]
                 )
-            if output_dir_has_existing_files(out_path, output_stem):
+            if output_dir_has_existing_files(out_path, job_output_stem):
                 choice = messagebox.askyesnocancel(
                     "Existing output files",
                     (
-                        f"The output folder already contains files for '{output_stem}'.\n\n"
+                        f"The output folder already contains files for '{job_output_stem}'.\n\n"
                         "Yes — overwrite existing files\n"
                         "No — use a new folder\n"
                         "Cancel — abort"
@@ -1961,7 +2053,7 @@ class App(ctk.CTk):
                     return
                 if choice is True:
                     try:
-                        clear_stem_outputs(out_path, output_stem)
+                        clear_stem_outputs(out_path, job_output_stem)
                     except OSError as exc:
                         messagebox.showerror(
                             "Error",
@@ -1988,6 +2080,9 @@ class App(ctk.CTk):
         )
 
         self.processing = True
+        self._job_output_dir = out_path
+        self._job_output_stem = job_output_stem
+        self._job_is_test = test_clip
         self._cancel_token = CancelToken()
         self._update_action_buttons()
         self.cancel_btn.configure(state="normal")
@@ -2021,14 +2116,7 @@ class App(ctk.CTk):
                     ),
                 )
             except CancelledError:
-                self.after(
-                    0,
-                    lambda: self._on_done(
-                        False,
-                        "Cancelled — partial files may remain in the output folder.",
-                        cancelled=True,
-                    ),
-                )
+                self.after(0, lambda: self._on_done(False, "", cancelled=True))
             except IncompatibleCodecError as exc:
                 err = _error_message(exc)
                 self.after(0, lambda e=err: self._on_done(False, e, cancelled=False))
@@ -2055,6 +2143,10 @@ class App(ctk.CTk):
         self.progress.stop()
         self.progress.configure(mode="determinate")
         self.progress.set(0 if cancelled else (1.0 if success else 0))
+        if cancelled:
+            msg = self._offer_partial_cleanup_after_cancel()
+        else:
+            self._clear_job_output_tracking()
         self.status_label.configure(text=msg)
         self._update_action_buttons()
         if success and output_dir is not None:

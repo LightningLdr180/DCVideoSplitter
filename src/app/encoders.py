@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from app.ffmpeg import list_encoders, test_video_encoder
+
+if TYPE_CHECKING:
+    from app.cancel import CancelToken
 from app.profiles import Codec
 
 ENCODER_PRIORITY: dict[Codec, list[str]] = {
@@ -40,6 +45,7 @@ class EncoderInfo:
     qsv_quality_tiers: dict[str, str] = field(default_factory=dict)
     suggested_codec: Codec = "h264"
     suggestion_reason: str = ""
+    probe_cancelled: bool = False
 
     def pick_encoder(self, codec: Codec) -> tuple[Codec, str, str]:
         """Return (actual_codec, ffmpeg_encoder_name, backend_label). May fallback."""
@@ -109,6 +115,11 @@ class EncoderInfo:
         lines.append(
             "Probe: FFmpeg encodes one test frame (same check as a real job)."
         )
+
+        if self.probe_cancelled:
+            lines.append(
+                "Encoder detection was cancelled — only verified encoders are available."
+            )
 
         if self.failed_hw_encoders:
             lines.append(
@@ -336,23 +347,51 @@ def _detect_gpu_names_nvidia_smi() -> list[str]:
 def filter_working_encoders(
     listed: set[str],
     gpu_names: list[str],
-) -> tuple[set[str], tuple[str, ...], dict[str, str], dict[str, str]]:
+    cancel: CancelToken | None = None,
+    on_probe: Callable[[str], None] | None = None,
+) -> tuple[set[str], tuple[str, ...], dict[str, str], dict[str, str], bool]:
     """Keep encoders that pass a quick one-frame encode test (hardware) or are CPU libs."""
+    from app.cancel import CancelledError
+
     working: set[str] = set()
     probe_errors: dict[str, str] = {}
     qsv_quality_tiers: dict[str, str] = {}
     vendors = _gpu_vendors(gpu_names)
+    cancelled = False
 
     for encoder in CPU_VIDEO_ENCODERS:
+        if cancel is not None:
+            try:
+                cancel.check()
+            except CancelledError:
+                cancelled = True
+                break
         if encoder in listed:
             working.add(encoder)
 
+    probed_hw: set[str] = set()
     for encoder in HW_VIDEO_ENCODERS:
+        if cancel is not None and cancel.cancelled:
+            cancelled = True
+            break
+        if cancel is not None:
+            try:
+                cancel.check()
+            except CancelledError:
+                cancelled = True
+                break
         if encoder not in listed:
             continue
         if vendors and not _encoder_matches_gpu_vendor(encoder, vendors):
             continue
-        ok, err, tier = test_video_encoder(encoder)
+        if on_probe is not None:
+            on_probe(encoder)
+        probed_hw.add(encoder)
+        try:
+            ok, err, tier = test_video_encoder(encoder, cancel=cancel)
+        except CancelledError:
+            cancelled = True
+            break
         if ok:
             working.add(encoder)
             if "qsv" in encoder and tier:
@@ -360,14 +399,8 @@ def filter_working_encoders(
         else:
             probe_errors[encoder] = err
 
-    listed_hw = {
-        encoder
-        for encoder in HW_VIDEO_ENCODERS
-        if encoder in listed
-        and (not vendors or _encoder_matches_gpu_vendor(encoder, vendors))
-    }
-    failed_hw = tuple(sorted(listed_hw - working))
-    return working, failed_hw, probe_errors, qsv_quality_tiers
+    failed_hw = tuple(sorted(probed_hw - working))
+    return working, failed_hw, probe_errors, qsv_quality_tiers, cancelled
 
 
 def suggest_codec(encoders: set[str]) -> tuple[Codec, str]:
@@ -396,14 +429,31 @@ def suggest_codec(encoders: set[str]) -> tuple[Codec, str]:
     return "h264", "Using CPU H.264 (slower)"
 
 
-def probe_encoders() -> EncoderInfo:
+def probe_encoders(
+    cancel: CancelToken | None = None,
+    on_probe: Callable[[str], None] | None = None,
+) -> EncoderInfo:
+    from app.cancel import CancelledError
+
+    if cancel is not None:
+        cancel.check()
     gpu_names = detect_gpu_names()
+    if cancel is not None:
+        cancel.check()
     try:
-        listed = list_encoders()
+        listed = list_encoders(cancel=cancel)
     except FileNotFoundError:
         listed = set()
-    working, failed_hw, probe_errors, qsv_quality_tiers = filter_working_encoders(listed, gpu_names)
+    except CancelledError:
+        listed = set()
+    working, failed_hw, probe_errors, qsv_quality_tiers, cancelled = (
+        filter_working_encoders(listed, gpu_names, cancel=cancel, on_probe=on_probe)
+    )
+    if cancel is not None and cancel.cancelled:
+        cancelled = True
     suggested, reason = suggest_codec(working)
+    if cancelled:
+        reason = f"Detection cancelled — {reason}"
     return EncoderInfo(
         gpu_names=gpu_names,
         available_encoders=working,
@@ -412,4 +462,5 @@ def probe_encoders() -> EncoderInfo:
         qsv_quality_tiers=qsv_quality_tiers,
         suggested_codec=suggested,
         suggestion_reason=reason,
+        probe_cancelled=cancelled,
     )

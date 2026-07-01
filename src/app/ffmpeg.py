@@ -163,8 +163,8 @@ def run_command(
     return subprocess.CompletedProcess(args, proc.returncode or 0, stdout, stderr)
 
 
-def list_encoders() -> set[str]:
-    result = run_command([str(ffmpeg_path()), "-encoders"])
+def list_encoders(cancel: Optional[CancelToken] = None) -> set[str]:
+    result = run_command([str(ffmpeg_path()), "-encoders"], cancel=cancel)
     encoders: set[str] = set()
     for line in result.stdout.splitlines():
         match = re.match(r"^\s+V\S+\s+(\S+)", line)
@@ -267,8 +267,15 @@ def _encoder_probe_attempts(encoder: str) -> list[tuple[list[str], str]]:
 
 
 def _run_encoder_probe(
-    encoder: str, extra_args: list[str], timeout: float, *, frames: int = 1
+    encoder: str,
+    extra_args: list[str],
+    timeout: float,
+    *,
+    frames: int = 1,
+    cancel: Optional[CancelToken] = None,
 ) -> tuple[bool, str]:
+    if cancel is not None:
+        cancel.check()
     args = [
         str(ffmpeg_path()),
         "-hide_banner",
@@ -289,32 +296,53 @@ def _run_encoder_probe(
         "-",
     ]
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             args,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             creationflags=CREATE_NO_WINDOW,
-            timeout=timeout,
-            check=False,
             cwd=str(ffmpeg_dir()),
         )
-    except subprocess.TimeoutExpired:
-        return False, f"probe timed out after {timeout:.0f}s"
     except OSError as exc:
         return False, str(exc)[:160]
+    if cancel is not None:
+        cancel.set_proc(proc)
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stop_process(proc)
+            return False, f"probe timed out after {timeout:.0f}s"
+        if cancel is not None:
+            cancel.check()
+    except CancelledError:
+        stop_process(proc)
+        raise
+    finally:
+        if cancel is not None:
+            cancel.clear_proc()
     if proc.returncode == 0:
         return True, ""
-    detail = (proc.stderr or proc.stdout or "").strip()
+    detail = (stderr or stdout or "").strip()
     return False, _clip_probe_error(detail)
 
 
-def test_video_encoder(encoder: str, timeout: float = 30.0) -> tuple[bool, str, str]:
+def test_video_encoder(
+    encoder: str,
+    timeout: float = 30.0,
+    cancel: Optional[CancelToken] = None,
+) -> tuple[bool, str, str]:
     """Run a one-frame null encode; return (ok, error, quality_tier)."""
     ensure_ffmpeg()
     last_err = "encode probe failed"
     for extra, tier in _encoder_probe_attempts(encoder):
+        if cancel is not None:
+            cancel.check()
         frames = 60 if "qsv" in encoder and tier == "full" else 1
-        ok, err = _run_encoder_probe(encoder, extra, timeout, frames=frames)
+        ok, err = _run_encoder_probe(
+            encoder, extra, timeout, frames=frames, cancel=cancel
+        )
         if ok:
             return True, "", tier
         if err:
