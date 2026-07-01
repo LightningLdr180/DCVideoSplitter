@@ -104,6 +104,12 @@ ACTION_BTN_DISABLED_HOVER = ("gray60", "gray40")
 
 UI_SCALE = 0.9
 
+# Window size is not scaled — widgets are, so the shell stays roomy at 0.9 widget scale.
+WINDOW_WIDTH = 1520
+WINDOW_HEIGHT = 860
+WINDOW_MIN_WIDTH = 1200
+WINDOW_MIN_HEIGHT = 720
+
 
 def _ui(n: float) -> int:
     return max(1, round(n * UI_SCALE))
@@ -146,8 +152,8 @@ class App(ctk.CTk):
         ctk.set_widget_scaling(UI_SCALE)
 
         self.title("DC Video Splitter")
-        self.geometry(f"{_ui(1400)}x{_ui(720)}")
-        self.minsize(_ui(1100), _ui(620))
+        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+        self.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
 
         self.encoder_info: EncoderInfo | None = None
         self._encoders_ready = False
@@ -183,14 +189,6 @@ class App(ctk.CTk):
         body = ctk.CTkFrame(frame, fg_color="transparent")
         body.pack(fill="x", padx=10, pady=(0, 8))
         return body
-
-    def _show_log_frame(self) -> None:
-        if not self.log_frame.winfo_ismapped():
-            self.log_frame.pack(fill="x", pady=(8, 0))
-
-    def _hide_log_frame(self) -> None:
-        if self.log_frame.winfo_ismapped():
-            self.log_frame.pack_forget()
 
     def _build_ui(self) -> None:
         self.bottom_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -251,15 +249,16 @@ class App(ctk.CTk):
         ctk.CTkLabel(self.log_frame, text="Log").pack(anchor="w", padx=10, pady=(6, 0))
         self.log_box = ctk.CTkTextbox(self.log_frame, height=88)
         self.log_box.pack(fill="x", padx=10, pady=(4, 8))
+        self.log_frame.pack(fill="x", pady=(8, 0))
 
         self.content_scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.content_scroll.pack(fill="both", expand=True, padx=12, pady=(10, 4))
 
         self.main_frame = ctk.CTkFrame(self.content_scroll, fg_color="transparent")
         self.main_frame.pack(fill="x", anchor="n")
-        self.main_frame.grid_columnconfigure(0, weight=3, minsize=_ui(260))
-        self.main_frame.grid_columnconfigure(1, weight=2, minsize=_ui(220))
-        self.main_frame.grid_columnconfigure(2, weight=5, minsize=_ui(500))
+        self.main_frame.grid_columnconfigure(0, weight=3, minsize=_ui(280))
+        self.main_frame.grid_columnconfigure(1, weight=2, minsize=_ui(240))
+        self.main_frame.grid_columnconfigure(2, weight=5, minsize=_ui(560))
 
         col_source = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         col_source.grid(row=0, column=0, sticky="new", padx=(0, 4))
@@ -494,7 +493,6 @@ class App(ctk.CTk):
             "Download and install it automatically now?\n"
             "(~160 MB, Windows 64-bit build from BtbN FFmpeg Builds)",
         ):
-            self._show_log_frame()
             self._log(f"FFmpeg missing — downloading to {folder}")
             self._set_status("Downloading FFmpeg…", None)
             self.progress.stop()
@@ -1466,7 +1464,6 @@ class App(ctk.CTk):
         self._update_action_buttons()
         self.cancel_btn.configure(state="normal")
         self.log_box.delete("1.0", "end")
-        self._show_log_frame()
         self.progress.stop()
         self.progress.set(0)
         self._set_status("Starting...", 0)
