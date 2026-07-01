@@ -13,9 +13,11 @@ from app.ui.constants import (
     LIMIT_CHIP_WIDTH,
     PLAN_LABEL_WRAP,
     RESOLUTION_PRESETS,
+    SETTINGS_COLUMN_MIN,
+    SOURCE_COLUMN_WIDTH,
     SOURCE_COLUMN_WRAP,
+    SYSTEM_COLUMN_WIDTH,
     SYSTEM_COLUMN_WRAP,
-    _ui,
 )
 from app.ui.scroll import _stabilize_scrollable_frame
 
@@ -98,16 +100,22 @@ class LayoutMixin:
 
         self.main_frame = ctk.CTkFrame(self.content_scroll, fg_color="transparent")
         self.main_frame.pack(fill="x", anchor="n")
-        self.main_frame.grid_columnconfigure(0, weight=3, minsize=_ui(280))
-        self.main_frame.grid_columnconfigure(1, weight=2, minsize=_ui(240))
-        self.main_frame.grid_columnconfigure(2, weight=5, minsize=_ui(560))
+        self.main_frame.grid_columnconfigure(0, weight=0, minsize=SOURCE_COLUMN_WIDTH)
+        self.main_frame.grid_columnconfigure(1, weight=0, minsize=SYSTEM_COLUMN_WIDTH)
+        self.main_frame.grid_columnconfigure(2, weight=1, minsize=SETTINGS_COLUMN_MIN)
 
-        col_source = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        col_source.grid(row=0, column=0, sticky="new", padx=(0, 4))
-        col_system = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        col_system.grid(row=0, column=1, sticky="new", padx=4)
+        col_source = ctk.CTkFrame(
+            self.main_frame, fg_color="transparent", width=SOURCE_COLUMN_WIDTH
+        )
+        col_source.pack_propagate(False)
+        col_source.grid(row=0, column=0, sticky="nsw", padx=(0, 4))
+        col_system = ctk.CTkFrame(
+            self.main_frame, fg_color="transparent", width=SYSTEM_COLUMN_WIDTH
+        )
+        col_system.pack_propagate(False)
+        col_system.grid(row=0, column=1, sticky="nsw", padx=4)
         col_settings = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        col_settings.grid(row=0, column=2, sticky="new", padx=(4, 0))
+        col_settings.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
 
         # --- Column 1: source video, metadata, output ---
         file_body = self._section(col_source, "Source video")
@@ -136,6 +144,7 @@ class LayoutMixin:
             text_color="#f0ad4e",
             wraplength=SOURCE_COLUMN_WRAP,
             justify="left",
+            height=56,
         )
         self.nudge_label.pack(anchor="w", pady=(6, 0))
 

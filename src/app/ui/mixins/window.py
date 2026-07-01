@@ -57,13 +57,14 @@ class WindowMixin:
         _windows_set_window_bounds(self, left, top, right - left, bottom - top)
 
     def _lock_window_size(self) -> None:
-        """Keep CustomTkinter from growing the window after layout/Configure events."""
+        """Keep CustomTkinter from resizing the window when content changes."""
         if self.state() == "zoomed":
             return
         self._current_width = WINDOW_WIDTH
         self._current_height = WINDOW_HEIGHT
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        # Match min to max so nudge/hint text changes cannot shrink or grow the shell.
+        self.minsize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.maxsize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
     def _place_window(self, *, _retry: bool = False) -> None:

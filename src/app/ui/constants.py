@@ -27,8 +27,8 @@ ACTION_BTN_DISABLED_HOVER = ("gray60", "gray40")
 UI_SCALE = 0.9
 
 # Window size is not scaled — widgets are, so the shell stays roomy at 0.9 widget scale.
-WINDOW_WIDTH = 1520
-WINDOW_HEIGHT = 860
+WINDOW_WIDTH = 1280
+WINDOW_HEIGHT = 800
 WINDOW_MIN_WIDTH = 1200
 WINDOW_MIN_HEIGHT = 720
 
@@ -45,7 +45,10 @@ PROCESSING_PLANS: tuple[tuple[str, str, str], ...] = (
 PLAN_BY_ID: dict[str, tuple[str, str, str]] = {p[0]: p for p in PROCESSING_PLANS}
 PLAN_ORDER: tuple[str, ...] = ("split", "hevc", "h264", "av1")
 PLAN_LABEL_WRAP = _ui(520)
+SETTINGS_COLUMN_MIN = PLAN_LABEL_WRAP + _ui(36)
+SOURCE_COLUMN_WIDTH = _ui(380)
 SOURCE_COLUMN_WRAP = _ui(340)
+SYSTEM_COLUMN_WIDTH = _ui(300)
 SYSTEM_COLUMN_WRAP = _ui(248)
 GPU_SCROLL_HEIGHT = 48
 LIMIT_CHIP_WIDTH = 76
