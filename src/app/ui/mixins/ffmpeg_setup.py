@@ -122,10 +122,11 @@ class FfmpegSetupMixin:
         token = self._probe_cancel
 
         def on_probe(encoder: str) -> None:
-            self.after(
-                0,
-                lambda e=encoder: self._set_status(f"Testing {e}…", None),
-            )
+            def update(e: str = encoder) -> None:
+                if self._encoder_probing:
+                    self._set_status(f"Testing {e}…", None)
+
+            self.after(0, update)
 
         try:
             info = probe_encoders(cancel=token, on_probe=on_probe)
@@ -148,17 +149,16 @@ class FfmpegSetupMixin:
         if not self.winfo_exists():
             return
         self._clear_encoder_probe_state()
+        self.cancel_btn.configure(state="disabled")
         self._encoders_ready = True
         self.encoder_info = info
         if self._closing:
-            self.cancel_btn.configure(state="disabled")
             self._finish_close()
             return
         if cancelled and info is not None:
             self._log(
                 "GPU encoder detection cancelled — using encoders verified so far."
             )
-            self._set_status("Ready", 0)
         if error:
             messagebox.showerror("Encoder detection failed", error)
         elif info is not None:
@@ -168,7 +168,7 @@ class FfmpegSetupMixin:
             self._on_settings_changed()
         else:
             self._update_action_buttons()
-        self.cancel_btn.configure(state="disabled")
+        self._set_status("Ready", 0)
         self.after(50, self._place_window)
 
     def _update_gpu_label(self) -> None:
