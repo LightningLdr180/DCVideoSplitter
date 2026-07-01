@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import tkinter as tk
 from collections.abc import Callable
@@ -12,6 +13,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from app.cancel import CancelToken, CancelledError
+from app.dpi_pause import attach_move_pause
 from app.encoders import EncoderInfo, default_hidden_cpu_plans, probe_encoders
 from app.ffmpeg import ProbeError, VideoInfo, ffmpeg_available, probe_video
 from app.ffmpeg_download import download_ffmpeg
@@ -141,6 +143,193 @@ def _stabilize_scrollable_frame(frame: ctk.CTkScrollableFrame) -> None:
     frame.bind("<Configure>", _on_configure)
 
 
+def _windows_monitor_work_area_at_cursor() -> tuple[int, int, int, int] | None:
+    """Return (left, top, right, bottom) work area for the monitor under the cursor."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        pt = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        return _windows_monitor_work_area_at_point(pt.x, pt.y)
+    except (AttributeError, OSError):
+        return None
+
+
+def _windows_monitor_work_area_at_point(x: int, y: int) -> tuple[int, int, int, int] | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.c_ulong),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", ctypes.c_ulong),
+            ]
+
+        pt = wintypes.POINT(x, y)
+        monitor = ctypes.windll.user32.MonitorFromPoint(pt, 2)
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        work = info.rcWork
+        return work.left, work.top, work.right, work.bottom
+    except (AttributeError, OSError):
+        return None
+
+
+def _windows_primary_work_area() -> tuple[int, int, int, int] | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.c_ulong),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", ctypes.c_ulong),
+            ]
+
+        pt = wintypes.POINT(0, 0)
+        monitor = ctypes.windll.user32.MonitorFromPoint(pt, 1)
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        work = info.rcWork
+        return work.left, work.top, work.right, work.bottom
+    except (AttributeError, OSError):
+        return None
+
+
+def _windows_monitor_work_area_for_window(tk_window: tk.Misc) -> tuple[int, int, int, int] | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.c_ulong),
+                ("rcMonitor", RECT),
+                ("rcWork", RECT),
+                ("dwFlags", ctypes.c_ulong),
+            ]
+
+        hwnd = _windows_window_hwnd(tk_window)
+        if not hwnd:
+            return _windows_primary_work_area()
+        monitor = ctypes.windll.user32.MonitorFromWindow(hwnd, 2)
+        info = MONITORINFO()
+        info.cbSize = ctypes.sizeof(MONITORINFO)
+        if not ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return _windows_primary_work_area()
+        work = info.rcWork
+        return work.left, work.top, work.right, work.bottom
+    except (AttributeError, OSError):
+        return _windows_primary_work_area()
+
+
+def _windows_window_hwnd(tk_window: tk.Misc) -> int:
+    import ctypes
+
+    hwnd = ctypes.windll.user32.GetParent(tk_window.winfo_id())
+    return hwnd if hwnd else tk_window.winfo_id()
+
+
+def _windows_window_outer_size(tk_window: tk.Misc) -> tuple[int, int]:
+    if sys.platform != "win32":
+        return WINDOW_WIDTH, WINDOW_HEIGHT
+    try:
+        import ctypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        rect = RECT()
+        hwnd = _windows_window_hwnd(tk_window)
+        if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            w = rect.right - rect.left
+            h = rect.bottom - rect.top
+            if w > 0 and h > 0:
+                return w, h
+    except (AttributeError, OSError):
+        pass
+    return WINDOW_WIDTH, WINDOW_HEIGHT
+
+
+def _windows_move_window(tk_window: tk.Misc, x: int, y: int) -> bool:
+    return _windows_set_window_bounds(tk_window, x, y, 0, 0, move_only=True)
+
+
+def _windows_set_window_bounds(
+    tk_window: tk.Misc,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    *,
+    move_only: bool = False,
+) -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        hwnd = _windows_window_hwnd(tk_window)
+        flags = 0x0004  # SWP_NOZORDER
+        if move_only:
+            flags |= 0x0001  # SWP_NOSIZE
+        else:
+            flags |= 0x0040  # SWP_SHOWWINDOW
+        return bool(
+            ctypes.windll.user32.SetWindowPos(
+                hwnd, 0, x, y, width, height, flags
+            )
+        )
+    except (AttributeError, OSError):
+        return False
+
+
 # Right panel: unified processing plans (mode + codec in one choice)
 PROCESSING_PLANS: tuple[tuple[str, str, str], ...] = (
     ("split", "Split only", "Fast · no re-encode"),
@@ -172,17 +361,18 @@ BITRATE_PRESETS: tuple[tuple[str, str], ...] = (
 
 class App(ctk.CTk):
     def __init__(self) -> None:
-        # CustomTkinter polls DPI every 100ms and rescales all widgets when the window
-        # crosses monitors — that causes visible jitter. Fixed UI_SCALE is enough for us.
-        ctk.deactivate_automatic_dpi_awareness()
         super().__init__()
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         ctk.set_widget_scaling(UI_SCALE)
 
         self.title("DC Video Splitter")
-        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        self._drag_ghost_active = False
+        self._ghost_frame: ctk.CTkFrame | None = None
+        self._suppress_drag_ghost = False
+        self._placing_window = False
+        self._window_zoomed = False
+        self._lock_window_size()
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
         self.encoder_info: EncoderInfo | None = None
@@ -213,7 +403,156 @@ class App(ctk.CTk):
         self._bitrate_chip_buttons: dict[str, ctk.CTkButton] = {}
 
         self._build_ui()
+        attach_move_pause(
+            self,
+            on_drag_start=self._enter_drag_ghost,
+            on_drag_end=self._exit_drag_ghost,
+        )
         self._init_encoders()
+        self.after_idle(self._place_window)
+        self.after(100, self._place_window)
+        self.after(1200, self._place_window)
+        self.bind("<Configure>", self._sync_window_mode, add="+")
+
+    def _sync_window_mode(self, event: tk.Event) -> None:
+        if event.widget is not self:
+            return
+        zoomed = self.state() == "zoomed"
+        if zoomed == self._window_zoomed:
+            return
+        self._window_zoomed = zoomed
+        if zoomed:
+            self._unlock_for_maximize()
+        else:
+            self._lock_window_size()
+
+    def _unlock_for_maximize(self) -> None:
+        work = _windows_monitor_work_area_for_window(self)
+        if work:
+            px_w = work[2] - work[0]
+            px_h = work[3] - work[1]
+            try:
+                lw = max(WINDOW_MIN_WIDTH, round(self._reverse_window_scaling(px_w)))
+                lh = max(WINDOW_MIN_HEIGHT, round(self._reverse_window_scaling(px_h)))
+            except AttributeError:
+                lw, lh = px_w, px_h
+            self.maxsize(lw, lh)
+        else:
+            self.maxsize(10000, 10000)
+        self.after_idle(self._fill_work_area)
+
+    def _fill_work_area(self) -> None:
+        if sys.platform != "win32":
+            return
+        work = _windows_monitor_work_area_for_window(self)
+        if not work:
+            return
+        left, top, right, bottom = work
+        _windows_set_window_bounds(self, left, top, right - left, bottom - top)
+
+    def _lock_window_size(self) -> None:
+        """Keep CustomTkinter from growing the window after layout/Configure events."""
+        if self.state() == "zoomed":
+            return
+        self._current_width = WINDOW_WIDTH
+        self._current_height = WINDOW_HEIGHT
+        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+        self.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        self.maxsize(WINDOW_WIDTH, WINDOW_HEIGHT)
+
+    def _place_window(self, *, _retry: bool = False) -> None:
+        if (
+            getattr(self, "_placing_window", False)
+            or getattr(self, "_dpi_move_active", False)
+            or getattr(self, "_drag_ghost_active", False)
+            or self.state() == "zoomed"
+        ):
+            return
+
+        self._placing_window = True
+        try:
+            self._place_window_impl(_retry=_retry)
+        finally:
+            self._placing_window = False
+
+    def _place_window_impl(self, *, _retry: bool = False) -> None:
+        self._lock_window_size()
+        self.update_idletasks()
+
+        w, h = WINDOW_WIDTH, WINDOW_HEIGHT
+        outer = _windows_window_outer_size(self)
+        if outer[0] >= WINDOW_MIN_WIDTH:
+            w = outer[0]
+        if outer[1] >= WINDOW_MIN_HEIGHT:
+            h = outer[1]
+
+        work_area = _windows_monitor_work_area_for_window(self)
+        if work_area is None:
+            work_area = _windows_primary_work_area()
+        if work_area is None:
+            work_area = _windows_monitor_work_area_at_cursor()
+        if work_area:
+            left, top, right, bottom = work_area
+            x = left + (right - left - w) // 2
+            y = top + (bottom - top - h) // 2
+            x = max(left, min(x, right - w))
+            y = max(top, min(y, bottom - h))
+        else:
+            x = max(0, (self.winfo_screenwidth() - w) // 2)
+            y = max(0, (self.winfo_screenheight() - h) // 2)
+
+        self._block_update_dimensions_event = True
+        self._suppress_drag_ghost = True
+        try:
+            moved = _windows_move_window(self, x, y)
+            if not moved:
+                if sys.platform == "win32" and not _retry:
+                    self.after(50, lambda: self._place_window(_retry=True))
+                    return
+                try:
+                    rx = round(self._reverse_window_scaling(x))
+                    ry = round(self._reverse_window_scaling(y))
+                    self.geometry(f"+{rx}+{ry}")
+                except (AttributeError, tk.TclError):
+                    self.geometry(f"+{x}+{y}")
+        finally:
+            def _clear_place_flags() -> None:
+                self._block_update_dimensions_event = False
+                self._suppress_drag_ghost = False
+
+            self.after(50, _clear_place_flags)
+
+    def _enter_drag_ghost(self) -> None:
+        if self._drag_ghost_active:
+            return
+        self._drag_ghost_active = True
+        self.content_scroll.pack_forget()
+        self.bottom_frame.pack_forget()
+        if self._ghost_frame is None:
+            self._ghost_frame = ctk.CTkFrame(
+                self,
+                fg_color=("#1c1c1c", "#1c1c1c"),
+                corner_radius=0,
+            )
+        self._ghost_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        try:
+            self._saved_window_alpha = float(self.attributes("-alpha"))
+            self.attributes("-alpha", 0.55)
+        except (tk.TclError, ValueError, TypeError):
+            pass
+
+    def _exit_drag_ghost(self) -> None:
+        if not self._drag_ghost_active:
+            return
+        self._drag_ghost_active = False
+        if self._ghost_frame is not None:
+            self._ghost_frame.place_forget()
+        self.bottom_frame.pack(fill="x", side="bottom", padx=12, pady=(0, 10))
+        self.content_scroll.pack(fill="both", expand=True, padx=12, pady=(10, 4))
+        try:
+            self.attributes("-alpha", getattr(self, "_saved_window_alpha", 1.0))
+        except tk.TclError:
+            pass
 
     def _background_busy(self) -> bool:
         return self.processing or self._ffmpeg_downloading or self._encoder_probing
@@ -682,6 +1021,7 @@ class App(ctk.CTk):
             self._on_settings_changed()
         else:
             self._update_action_buttons()
+        self.after(50, self._place_window)
 
     def _update_gpu_label(self) -> None:
         if not hasattr(self, "gpu_text"):
