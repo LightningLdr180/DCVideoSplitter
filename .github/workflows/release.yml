@@ -1,9 +1,11 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.0.0)"
+        required: true
 
 permissions:
   contents: write
@@ -13,18 +15,50 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      - name: Skip if release zip already exists
+        id: check
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $zip = "DCVideoSplitter-$env:VERSION-win64.zip"
+          $tag = "v$env:VERSION"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          try {
+            $release = Invoke-RestMethod `
+              -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" `
+              -Headers $headers
+            foreach ($asset in @($release.assets)) {
+              if ($asset.name -eq $zip) {
+                Write-Host "Release $tag already has $zip — skipping CI build."
+                "skip=true" >> $env:GITHUB_OUTPUT
+                exit 0
+              }
+            }
+          } catch {
+            Write-Host "No existing release asset found — building."
+          }
+
       - name: Checkout
+        if: steps.check.outputs.skip != 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: steps.check.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: steps.check.outputs.skip != 'true'
         run: pip install -r requirements.txt
 
       - name: Download FFmpeg
+        if: steps.check.outputs.skip != 'true'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path ffmpeg | Out-Null
@@ -40,12 +74,15 @@ jobs:
           if (Test-Path $license) { Copy-Item $license ffmpeg/ }
 
       - name: Build app
+        if: steps.check.outputs.skip != 'true'
         run: pyinstaller --noconfirm DCVideoSplitter.spec
 
       - name: Package release zip
+        if: steps.check.outputs.skip != 'true'
         shell: cmd
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          set VERSION=%GITHUB_REF_NAME:v=%
           set ZIPNAME=DCVideoSplitter-%VERSION%-win64.zip
           if exist dist\DCVideoSplitter\ffmpeg rmdir /s /q dist\DCVideoSplitter\ffmpeg
           mkdir dist\DCVideoSplitter\ffmpeg
@@ -57,7 +94,10 @@ jobs:
           echo ZIP_NAME=%ZIPNAME%>> %GITHUB_ENV%
 
       - name: Upload to GitHub Releases
+        if: steps.check.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ inputs.version }}
+          name: ${{ inputs.version }}
           files: dist/${{ env.ZIP_NAME }}
           generate_release_notes: true

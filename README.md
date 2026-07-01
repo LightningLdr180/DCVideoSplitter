@@ -22,6 +22,19 @@ DCVideoSplitter/
 
 Keep `ffmpeg/` next to the `.exe` — the app needs it to run. If FFmpeg is missing, the app will offer to download it automatically on first launch.
 
+## Windows SmartScreen warning
+
+The first time you run **DCVideoSplitter.exe**, Windows may show a blue **“Windows protected your PC”** screen and list **Unknown publisher**. That is normal for apps distributed without a paid code-signing certificate — it does not mean the file is infected.
+
+To run the app:
+
+1. Click **More info** (if shown)
+2. Click **Run anyway**
+
+If you downloaded a zip, you can also right-click it → **Properties** → check **Unblock** → **OK**, then unzip and run again.
+
+Only download releases from the [official GitHub Releases](https://github.com/LightningLdr180/DCVideoSplitter/releases) page.
+
 ## How to use
 
 1. Run **DCVideoSplitter.exe**

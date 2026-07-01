@@ -76,4 +76,4 @@ if not "%~1"=="" (
 ) else (
     echo   release.bat 1.0.0 upload
 )
-echo   Or push a tag:  git tag vX.Y.Z ^&^& git push origin vX.Y.Z
+echo   Or CI build:  release.bat 1.0.0 ci
