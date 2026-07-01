@@ -9,6 +9,7 @@ venv/
 ffmpeg/*
 !ffmpeg/README.md
 test_output/
+github-token.txt
 *.mp4
 *.mkv
 *.mov
