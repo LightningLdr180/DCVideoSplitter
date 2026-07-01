@@ -14,8 +14,10 @@ from app.profiles import (
     effective_limit_bytes,
     ensure_valid_bitrate_mode,
     estimate_split_parts,
+    output_would_overwrite_source,
     resolution_is_available,
     safety_padding,
+    single_output_filename,
     source_video_bitrate_kbps,
 )
 
@@ -75,8 +77,22 @@ def test_descriptive_output_stem_split() -> None:
         "split",
         "h264",
         "balanced",
+        allow_split=True,
     )
-    assert stem == "clip_4k_split_split"
+    assert stem == "clip_4k_split"
+
+
+def test_descriptive_output_stem_remux() -> None:
+    stem = descriptive_output_stem(
+        "clip",
+        "original",
+        2160,
+        "split",
+        "h264",
+        "balanced",
+        allow_split=False,
+    )
+    assert stem == "clip_4k_remux"
 
 
 def test_resolution_is_available_no_upscale() -> None:
@@ -98,3 +114,53 @@ def test_ensure_valid_bitrate_mode_falls_back_to_source() -> None:
 
 def test_source_video_bitrate_kbps_from_bitrate() -> None:
     assert source_video_bitrate_kbps(10_000_000, 60.0, 0) == 9872
+
+
+def test_output_would_overwrite_source_dont_split_same_folder() -> None:
+    source = Path("D:/videos/clip_remux.mp4")
+    assert output_would_overwrite_source(
+        source,
+        Path("D:/videos"),
+        "clip",
+        "split",
+        allow_split=False,
+    )
+
+
+def test_output_would_overwrite_source_split_subfolder_ok() -> None:
+    source = Path("D:/videos/clip.mp4")
+    assert not output_would_overwrite_source(
+        source,
+        Path("D:/videos/clip_discord_parts"),
+        "clip",
+        "split",
+        allow_split=True,
+    )
+
+
+def test_output_would_overwrite_source_part_file_in_output_dir() -> None:
+    source = Path("D:/videos/out/clip_part002.mp4")
+    assert output_would_overwrite_source(
+        source,
+        Path("D:/videos/out"),
+        "clip",
+        "split",
+        allow_split=True,
+    )
+
+
+def test_output_would_overwrite_source_mov_in_same_folder_ok() -> None:
+    source = Path("D:/videos/clip.mov")
+    assert not output_would_overwrite_source(
+        source,
+        Path("D:/videos"),
+        "clip",
+        "split",
+        allow_split=False,
+    )
+
+
+def test_single_output_filename() -> None:
+    assert single_output_filename("clip", "split") == "clip_remux.mp4"
+    assert single_output_filename("clip", "split", descriptive=True) == "clip.mp4"
+    assert single_output_filename("clip", "compress") == "clip_compressed.mp4"

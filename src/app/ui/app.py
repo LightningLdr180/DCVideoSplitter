@@ -72,7 +72,7 @@ class App(
         self.codec = tk.StringVar(value="h264")
         self.show_cpu_encoders = tk.BooleanVar(value=False)
         self.gpu_two_pass = tk.BooleanVar(value=False)
-        self.descriptive_filenames = tk.BooleanVar(value=False)
+        self.descriptive_filenames = tk.BooleanVar(value=True)
         self.output_dir = tk.StringVar(value="")
         self._limit_chip_buttons: dict[float, ctk.CTkButton] = {}
         self._resolution_chip_buttons: dict[str, ctk.CTkButton] = {}

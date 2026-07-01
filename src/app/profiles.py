@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -551,10 +552,56 @@ def is_original_4k(resolution: Resolution, source_height: int) -> bool:
 
 def stem_output_glob_patterns(stem: str) -> tuple[str, ...]:
     return (
+        f"{stem}.mp4",
         f"{stem}_part*.mp4",
         f"{stem}_compressed.mp4",
+        f"{stem}_remux.mp4",
         f"{stem}_*.tmp.mp4",
     )
+
+
+def single_output_filename(stem: str, mode: Mode, *, descriptive: bool = False) -> str:
+    """Filename for don't-split jobs (one output file, no part numbering)."""
+    if mode == "split":
+        # Split-only + don't split = remux to one MP4 (no re-encode).
+        return f"{stem}.mp4" if descriptive else f"{stem}_remux.mp4"
+    return f"{stem}_compressed.mp4"
+
+
+def output_would_overwrite_source(
+    source: Path,
+    output_dir: Path,
+    stem: str,
+    mode: Mode,
+    *,
+    allow_split: bool,
+    descriptive_filenames: bool = False,
+) -> bool:
+    """True when a planned output path would be the same file as the source."""
+    source = source.resolve()
+    out_dir = Path(output_dir).resolve()
+
+    def conflicts(name: str) -> bool:
+        return (out_dir / name).resolve() == source
+
+    if not allow_split:
+        return conflicts(single_output_filename(stem, mode, descriptive=descriptive_filenames))
+
+    if mode == "compress":
+        return conflicts(f"{stem}_compressed.mp4")
+
+    if conflicts(f"{stem}_part001.mp4"):
+        return True
+    if mode != "split" and conflicts(f"{stem}_compressed.mp4"):
+        return True
+
+    if source.parent != out_dir:
+        return False
+
+    name = source.name
+    if re.match(rf"^{re.escape(stem)}_part\d+\.mp4$", name):
+        return True
+    return bool(re.match(rf"^{re.escape(stem)}_.+\.tmp\.mp4$", name))
 
 
 def output_dir_has_existing_files(output_dir: Path, stem: str) -> bool:
@@ -593,11 +640,14 @@ def descriptive_output_stem(
     mode: Mode,
     codec: Codec,
     bitrate_mode: BitrateMode = "balanced",
+    *,
+    allow_split: bool = True,
 ) -> str:
     res = _resolution_filename_tag(resolution, source_height, mode)
-    tag = "split" if mode == "split" else codec
-    br = "split" if mode == "split" else bitrate_mode
-    return f"{source_stem}_{res}_{tag}_{br}"
+    if mode == "split":
+        action = "split" if allow_split else "remux"
+        return f"{source_stem}_{res}_{action}"
+    return f"{source_stem}_{res}_{codec}_{bitrate_mode}"
 
 
 def test_output_stem(
@@ -607,9 +657,17 @@ def test_output_stem(
     mode: Mode,
     codec: Codec,
     bitrate_mode: BitrateMode = "balanced",
+    *,
+    allow_split: bool = True,
 ) -> str:
     return "test_" + descriptive_output_stem(
-        source_stem, resolution, source_height, mode, codec, bitrate_mode
+        source_stem,
+        resolution,
+        source_height,
+        mode,
+        codec,
+        bitrate_mode,
+        allow_split=allow_split,
     )
 
 

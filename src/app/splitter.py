@@ -47,6 +47,7 @@ from app.profiles import (
     NVENC_PRESET,
     NVENC_TUNE,
     segment_seconds_split_only,
+    single_output_filename,
     source_video_bitrate_kbps,
     target_encode_bitrate,
     test_output_stem,
@@ -98,7 +99,7 @@ class ProcessOptions:
     bitrate_mode: BitrateMode = "source"
     gpu_two_pass: bool = False
     allow_split: bool = True
-    descriptive_filenames: bool = False
+    descriptive_filenames: bool = True
 
 
 @dataclass
@@ -127,11 +128,23 @@ def _output_stem(info: VideoInfo, opts: ProcessOptions) -> str:
     base = _stem(info.path)
     if opts.max_duration is not None:
         return test_output_stem(
-            base, opts.resolution, info.height, opts.mode, opts.codec, opts.bitrate_mode
+            base,
+            opts.resolution,
+            info.height,
+            opts.mode,
+            opts.codec,
+            opts.bitrate_mode,
+            allow_split=opts.allow_split,
         )
     if opts.descriptive_filenames:
         return descriptive_output_stem(
-            base, opts.resolution, info.height, opts.mode, opts.codec, opts.bitrate_mode
+            base,
+            opts.resolution,
+            info.height,
+            opts.mode,
+            opts.codec,
+            opts.bitrate_mode,
+            allow_split=opts.allow_split,
         )
     return base
 
@@ -507,7 +520,7 @@ def _run_encode_with_fallback(
 
 def _collect_outputs(output_dir: Path, stem: str) -> list[Path]:
     pattern = re.compile(
-        rf"^{re.escape(stem)}_(?:part\d+(?:_\d+)*|compressed)\.mp4$"
+        rf"^{re.escape(stem)}(?:_(?:part\d+(?:_\d+)*|compressed|remux))?\.mp4$"
     )
     files = [f for f in output_dir.iterdir() if f.is_file() and pattern.match(f.name)]
     return sorted(files)
@@ -852,7 +865,9 @@ def _split_only(
 
     stem = _output_stem(info, opts)
     if not opts.allow_split:
-        out = opts.output_dir / f"{stem}.mp4"
+        out = opts.output_dir / single_output_filename(
+            stem, "split", descriptive=opts.descriptive_filenames
+        )
         on_log("Remuxing to single MP4 (no split)")
         if info.audio_codec and not audio_stream_copyable(
             info.audio_codec, info.audio_channels, info.audio_sample_rate
@@ -947,7 +962,9 @@ def _compress(
         )
         encode_ctx["video_kbps"] = video_kbps
         stem = _output_stem(info, opts)
-        out = opts.output_dir / f"{stem}_compressed.mp4"
+        out = opts.output_dir / single_output_filename(
+            stem, "compress", descriptive=opts.descriptive_filenames
+        )
         on_log(
             f"Compressing to single file, no split (~{CODEC_LABELS[preferred_codec]}, "
             f"{_encode_rate_label(hw_encoder, video_kbps)})"
@@ -983,7 +1000,9 @@ def _compress(
         encode_ctx["video_kbps"] = video_kbps
         stem = _output_stem(info, opts)
         if opts.mode == "compress":
-            out = opts.output_dir / f"{stem}_compressed.mp4"
+            out = opts.output_dir / single_output_filename(
+            stem, "compress", descriptive=opts.descriptive_filenames
+        )
             on_log(
                 f"Compressing to single file (~{CODEC_LABELS[preferred_codec]}, "
                 f"{_encode_rate_label(hw_encoder, video_kbps)})"

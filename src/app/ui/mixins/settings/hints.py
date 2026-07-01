@@ -12,6 +12,7 @@ from app.profiles import (
     is_original_4k,
     should_nudge_split_instead,
     should_warn_quality_loss,
+    single_output_filename,
     source_video_bitrate_kbps,
 )
 
@@ -113,10 +114,15 @@ class SettingHintsMixin:
                 mode,
                 self.codec.get(),  # type: ignore[arg-type]
                 self.bitrate_mode.get(),  # type: ignore[arg-type]
+                allow_split=self.allow_split.get(),
             )
 
-        if mode == "split" and not self.allow_split.get():
-            example = f"{stem}.mp4"
+        if not self.allow_split.get():
+            example = single_output_filename(
+                stem,
+                mode,  # type: ignore[arg-type]
+                descriptive=self.descriptive_filenames.get(),
+            )
         elif mode == "compress":
             example = f"{stem}_compressed.mp4"
         else:

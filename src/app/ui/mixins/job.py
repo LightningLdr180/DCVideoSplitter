@@ -15,6 +15,7 @@ from app.profiles import (
     clear_test_outputs,
     descriptive_output_stem,
     output_dir_has_existing_files,
+    output_would_overwrite_source,
     test_output_stem,
     unique_output_dir,
 )
@@ -125,6 +126,7 @@ class JobMixin:
                 self.mode.get(),  # type: ignore[arg-type]
                 self.codec.get(),  # type: ignore[arg-type]
                 self.bitrate_mode.get(),  # type: ignore[arg-type]
+                allow_split=self.allow_split.get(),
             )
             try:
                 clear_test_outputs(out_path, job_output_stem)
@@ -145,6 +147,7 @@ class JobMixin:
                     self.mode.get(),  # type: ignore[arg-type]
                     self.codec.get(),  # type: ignore[arg-type]
                     self.bitrate_mode.get(),  # type: ignore[arg-type]
+                    allow_split=self.allow_split.get(),
                 )
             if output_dir_has_existing_files(out_path, job_output_stem):
                 choice = messagebox.askyesnocancel(
@@ -171,6 +174,25 @@ class JobMixin:
                 elif choice is False:
                     out_path = unique_output_dir(out_path)
                     self.output_dir.set(str(out_path))
+
+        if output_would_overwrite_source(
+            self.video_path,
+            out_path,
+            job_output_stem,
+            self.mode.get(),  # type: ignore[arg-type]
+            allow_split=self.allow_split.get(),
+            descriptive_filenames=self.descriptive_filenames.get(),
+        ):
+            messagebox.showerror(
+                "Output would overwrite source",
+                (
+                    "The output folder and file naming would overwrite the source video:\n\n"
+                    f"{self.video_path}\n\n"
+                    "Choose a different output folder. The suggested "
+                    f"'{self.video_path.stem}_discord_parts' subfolder is recommended."
+                ),
+            )
+            return
 
         opts = ProcessOptions(
             mode=self.mode.get(),  # type: ignore[arg-type]
