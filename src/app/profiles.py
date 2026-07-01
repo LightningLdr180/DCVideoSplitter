@@ -74,6 +74,19 @@ def audio_stream_copyable(
     return True
 
 
+def split_remux_is_redundant(info: VideoInfo) -> bool:
+    """True when split-only + don't split would only recopy an already-compatible MP4."""
+    if not can_stream_copy_to_mp4(info.video_codec):
+        return False
+    if is_hevc_codec(info.video_codec):
+        return False  # remux may apply the hvc1 tag
+    if info.path.suffix.lower() != ".mp4":
+        return False
+    return audio_stream_copyable(
+        info.audio_codec, info.audio_channels, info.audio_sample_rate
+    )
+
+
 def is_hevc_codec(video_codec: str) -> bool:
     return video_codec.lower() in ("hevc", "h265")
 
@@ -552,7 +565,6 @@ def is_original_4k(resolution: Resolution, source_height: int) -> bool:
 
 def stem_output_glob_patterns(stem: str) -> tuple[str, ...]:
     return (
-        f"{stem}.mp4",
         f"{stem}_part*.mp4",
         f"{stem}_compressed.mp4",
         f"{stem}_remux.mp4",
@@ -560,11 +572,32 @@ def stem_output_glob_patterns(stem: str) -> tuple[str, ...]:
     )
 
 
-def single_output_filename(stem: str, mode: Mode, *, descriptive: bool = False) -> str:
+def _iter_stem_output_files(
+    output_dir: Path,
+    stem: str,
+    *,
+    exclude: Path | None = None,
+) -> list[Path]:
+    if not output_dir.is_dir():
+        return []
+    exclude_resolved = exclude.resolve() if exclude is not None else None
+    seen: set[Path] = set()
+    found: list[Path] = []
+    for pattern in stem_output_glob_patterns(stem):
+        for path in output_dir.glob(pattern):
+            if not path.is_file() or path in seen:
+                continue
+            if exclude_resolved is not None and path.resolve() == exclude_resolved:
+                continue
+            seen.add(path)
+            found.append(path)
+    return found
+
+
+def single_output_filename(stem: str, mode: Mode) -> str:
     """Filename for don't-split jobs (one output file, no part numbering)."""
     if mode == "split":
-        # Split-only + don't split = remux to one MP4 (no re-encode).
-        return f"{stem}.mp4" if descriptive else f"{stem}_remux.mp4"
+        return f"{stem}_remux.mp4"
     return f"{stem}_compressed.mp4"
 
 
@@ -575,7 +608,6 @@ def output_would_overwrite_source(
     mode: Mode,
     *,
     allow_split: bool,
-    descriptive_filenames: bool = False,
 ) -> bool:
     """True when a planned output path would be the same file as the source."""
     source = source.resolve()
@@ -585,7 +617,7 @@ def output_would_overwrite_source(
         return (out_dir / name).resolve() == source
 
     if not allow_split:
-        return conflicts(single_output_filename(stem, mode, descriptive=descriptive_filenames))
+        return conflicts(single_output_filename(stem, mode))
 
     if mode == "compress":
         return conflicts(f"{stem}_compressed.mp4")
@@ -604,32 +636,29 @@ def output_would_overwrite_source(
     return bool(re.match(rf"^{re.escape(stem)}_.+\.tmp\.mp4$", name))
 
 
-def output_dir_has_existing_files(output_dir: Path, stem: str) -> bool:
-    if not output_dir.is_dir():
-        return False
-    for pattern in stem_output_glob_patterns(stem):
-        if any(output_dir.glob(pattern)):
-            return True
-    return False
+def output_dir_has_existing_files(
+    output_dir: Path,
+    stem: str,
+    *,
+    exclude: Path | None = None,
+) -> bool:
+    return bool(_iter_stem_output_files(output_dir, stem, exclude=exclude))
 
 
-def clear_stem_outputs(output_dir: Path, stem: str) -> int:
+def clear_stem_outputs(
+    output_dir: Path,
+    stem: str,
+    *,
+    exclude: Path | None = None,
+) -> int:
     """Remove prior output files for this source stem."""
-    if not output_dir.is_dir():
-        return 0
     removed = 0
-    seen: set[Path] = set()
-    for pattern in stem_output_glob_patterns(stem):
-        for path in output_dir.glob(pattern):
-            if path.is_file() and path not in seen:
-                seen.add(path)
-                try:
-                    path.unlink()
-                except OSError as exc:
-                    raise OSError(
-                        f"Could not delete {path.name}: {exc}"
-                    ) from exc
-                removed += 1
+    for path in _iter_stem_output_files(output_dir, stem, exclude=exclude):
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise OSError(f"Could not delete {path.name}: {exc}") from exc
+        removed += 1
     return removed
 
 
@@ -645,8 +674,9 @@ def descriptive_output_stem(
 ) -> str:
     res = _resolution_filename_tag(resolution, source_height, mode)
     if mode == "split":
-        action = "split" if allow_split else "remux"
-        return f"{source_stem}_{res}_{action}"
+        if allow_split:
+            return f"{source_stem}_{res}_split"
+        return f"{source_stem}_{res}"
     return f"{source_stem}_{res}_{codec}_{bitrate_mode}"
 
 
@@ -695,15 +725,23 @@ def test_output_glob_patterns(test_stem: str) -> tuple[str, ...]:
     )
 
 
-def clear_test_outputs(output_dir: Path, test_stem: str) -> int:
+def clear_test_outputs(
+    output_dir: Path,
+    test_stem: str,
+    *,
+    exclude: Path | None = None,
+) -> int:
     """Remove prior test-clip files for one test configuration (same res/codec/mode)."""
     if not output_dir.is_dir():
         return 0
+    exclude_resolved = exclude.resolve() if exclude is not None else None
     removed = 0
     seen: set[Path] = set()
     for pattern in test_output_glob_patterns(test_stem):
         for path in output_dir.glob(pattern):
             if not path.is_file() or path in seen:
+                continue
+            if exclude_resolved is not None and path.resolve() == exclude_resolved:
                 continue
             if path.suffix.lower() not in {".mp4", ".tmp"}:
                 continue
@@ -711,9 +749,7 @@ def clear_test_outputs(output_dir: Path, test_stem: str) -> int:
             try:
                 path.unlink()
             except OSError as exc:
-                raise OSError(
-                    f"Could not delete {path.name}: {exc}"
-                ) from exc
+                raise OSError(f"Could not delete {path.name}: {exc}") from exc
             removed += 1
     return removed
 

@@ -16,6 +16,7 @@ from app.profiles import (
     descriptive_output_stem,
     output_dir_has_existing_files,
     output_would_overwrite_source,
+    split_remux_is_redundant,
     test_output_stem,
     unique_output_dir,
 )
@@ -52,7 +53,8 @@ class JobMixin:
 
         if out_dir is None or stem is None:
             return "Cancelled."
-        if not output_dir_has_existing_files(out_dir, stem):
+        source = self.video_path
+        if not output_dir_has_existing_files(out_dir, stem, exclude=source):
             return "Cancelled."
 
         if not messagebox.askyesno(
@@ -68,9 +70,9 @@ class JobMixin:
 
         try:
             removed = (
-                clear_test_outputs(out_dir, stem)
+                clear_test_outputs(out_dir, stem, exclude=source)
                 if is_test
-                else clear_stem_outputs(out_dir, stem)
+                else clear_stem_outputs(out_dir, stem, exclude=source)
             )
         except OSError as exc:
             err = _error_message(exc)
@@ -118,6 +120,22 @@ class JobMixin:
 
         out_path = Path(out)
         stem = self.video_path.stem
+
+        if (
+            self.mode.get() == "split"
+            and not self.allow_split.get()
+            and split_remux_is_redundant(self.video_info)
+        ):
+            messagebox.showerror(
+                "Nothing to do",
+                (
+                    "This source is already a Discord-compatible MP4 with copyable audio.\n\n"
+                    "Split only + Don't split would just write the same video to a new file.\n\n"
+                    "Pick a file size limit to split it, or choose Compress instead."
+                ),
+            )
+            return
+
         if test_clip:
             job_output_stem = test_output_stem(
                 stem,
@@ -129,7 +147,7 @@ class JobMixin:
                 allow_split=self.allow_split.get(),
             )
             try:
-                clear_test_outputs(out_path, job_output_stem)
+                clear_test_outputs(out_path, job_output_stem, exclude=self.video_path)
             except OSError as exc:
                 messagebox.showerror(
                     "Error",
@@ -149,7 +167,9 @@ class JobMixin:
                     self.bitrate_mode.get(),  # type: ignore[arg-type]
                     allow_split=self.allow_split.get(),
                 )
-            if output_dir_has_existing_files(out_path, job_output_stem):
+            if output_dir_has_existing_files(
+                out_path, job_output_stem, exclude=self.video_path
+            ):
                 choice = messagebox.askyesnocancel(
                     "Existing output files",
                     (
@@ -163,7 +183,9 @@ class JobMixin:
                     return
                 if choice is True:
                     try:
-                        clear_stem_outputs(out_path, job_output_stem)
+                        clear_stem_outputs(
+                            out_path, job_output_stem, exclude=self.video_path
+                        )
                     except OSError as exc:
                         messagebox.showerror(
                             "Error",
@@ -181,7 +203,6 @@ class JobMixin:
             job_output_stem,
             self.mode.get(),  # type: ignore[arg-type]
             allow_split=self.allow_split.get(),
-            descriptive_filenames=self.descriptive_filenames.get(),
         ):
             messagebox.showerror(
                 "Output would overwrite source",

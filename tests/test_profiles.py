@@ -9,17 +9,38 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from app.ffmpeg import VideoInfo
 from app.profiles import (
+    clear_stem_outputs,
     descriptive_output_stem,
     effective_limit_bytes,
     ensure_valid_bitrate_mode,
     estimate_split_parts,
+    output_dir_has_existing_files,
     output_would_overwrite_source,
     resolution_is_available,
     safety_padding,
     single_output_filename,
     source_video_bitrate_kbps,
+    split_remux_is_redundant,
 )
+
+
+def _video_info(**overrides: object) -> VideoInfo:
+    data = {
+        "path": Path("clip.mp4"),
+        "duration": 60.0,
+        "file_size": 1_000_000,
+        "width": 1280,
+        "height": 720,
+        "bitrate": 1_000_000,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "audio_channels": 2,
+        "audio_sample_rate": 48_000,
+    }
+    data.update(overrides)
+    return VideoInfo(**data)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -92,7 +113,7 @@ def test_descriptive_output_stem_remux() -> None:
         "balanced",
         allow_split=False,
     )
-    assert stem == "clip_4k_remux"
+    assert stem == "clip_4k"
 
 
 def test_resolution_is_available_no_upscale() -> None:
@@ -162,5 +183,39 @@ def test_output_would_overwrite_source_mov_in_same_folder_ok() -> None:
 
 def test_single_output_filename() -> None:
     assert single_output_filename("clip", "split") == "clip_remux.mp4"
-    assert single_output_filename("clip", "split", descriptive=True) == "clip.mp4"
     assert single_output_filename("clip", "compress") == "clip_compressed.mp4"
+
+
+def test_output_dir_has_existing_files_ignores_source_mp4(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"source")
+    assert not output_dir_has_existing_files(tmp_path, "clip", exclude=source)
+
+
+def test_clear_stem_outputs_never_deletes_source(tmp_path: Path) -> None:
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"source")
+    prior = tmp_path / "clip_remux.mp4"
+    prior.write_bytes(b"old output")
+    removed = clear_stem_outputs(tmp_path, "clip", exclude=source)
+    assert removed == 1
+    assert source.exists()
+    assert not prior.exists()
+
+
+def test_split_remux_is_redundant_h264_mp4() -> None:
+    assert split_remux_is_redundant(_video_info())
+
+
+def test_split_remux_is_redundant_mov_container() -> None:
+    assert not split_remux_is_redundant(_video_info(path=Path("clip.mov")))
+
+
+def test_split_remux_is_redundant_hevc_mp4() -> None:
+    assert not split_remux_is_redundant(_video_info(video_codec="hevc"))
+
+
+def test_split_remux_is_redundant_audio_reencode() -> None:
+    assert not split_remux_is_redundant(
+        _video_info(audio_codec="ac3", audio_channels=2, audio_sample_rate=48_000)
+    )

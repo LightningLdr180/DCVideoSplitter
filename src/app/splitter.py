@@ -865,9 +865,7 @@ def _split_only(
 
     stem = _output_stem(info, opts)
     if not opts.allow_split:
-        out = opts.output_dir / single_output_filename(
-            stem, "split", descriptive=opts.descriptive_filenames
-        )
+        out = opts.output_dir / single_output_filename(stem, "split")
         on_log("Remuxing to single MP4 (no split)")
         if info.audio_codec and not audio_stream_copyable(
             info.audio_codec, info.audio_channels, info.audio_sample_rate
@@ -962,9 +960,7 @@ def _compress(
         )
         encode_ctx["video_kbps"] = video_kbps
         stem = _output_stem(info, opts)
-        out = opts.output_dir / single_output_filename(
-            stem, "compress", descriptive=opts.descriptive_filenames
-        )
+        out = opts.output_dir / single_output_filename(stem, "compress")
         on_log(
             f"Compressing to single file, no split (~{CODEC_LABELS[preferred_codec]}, "
             f"{_encode_rate_label(hw_encoder, video_kbps)})"
@@ -1000,9 +996,7 @@ def _compress(
         encode_ctx["video_kbps"] = video_kbps
         stem = _output_stem(info, opts)
         if opts.mode == "compress":
-            out = opts.output_dir / single_output_filename(
-            stem, "compress", descriptive=opts.descriptive_filenames
-        )
+            out = opts.output_dir / single_output_filename(stem, "compress")
             on_log(
                 f"Compressing to single file (~{CODEC_LABELS[preferred_codec]}, "
                 f"{_encode_rate_label(hw_encoder, video_kbps)})"

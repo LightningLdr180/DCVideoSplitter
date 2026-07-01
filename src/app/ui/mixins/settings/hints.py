@@ -14,6 +14,7 @@ from app.profiles import (
     should_warn_quality_loss,
     single_output_filename,
     source_video_bitrate_kbps,
+    split_remux_is_redundant,
 )
 
 
@@ -31,7 +32,16 @@ class SettingHintsMixin:
         br = self.bitrate_mode.get()  # type: ignore[assignment]
         nudge = ""
 
-        if self.mode.get() != "split" and br == "source":
+        if (
+            self.mode.get() == "split"
+            and not self.allow_split.get()
+            and split_remux_is_redundant(v)
+        ):
+            nudge = (
+                "Source is already a Discord-compatible MP4 — remux would not change anything. "
+                "Pick a file size limit or Compress instead."
+            )
+        elif self.mode.get() != "split" and br == "source":
             nudge = (
                 "Source bitrate — matches input quality; files may be as large as split-only."
             )
@@ -118,11 +128,7 @@ class SettingHintsMixin:
             )
 
         if not self.allow_split.get():
-            example = single_output_filename(
-                stem,
-                mode,  # type: ignore[arg-type]
-                descriptive=self.descriptive_filenames.get(),
-            )
+            example = single_output_filename(stem, mode)  # type: ignore[arg-type]
         elif mode == "compress":
             example = f"{stem}_compressed.mp4"
         else:
