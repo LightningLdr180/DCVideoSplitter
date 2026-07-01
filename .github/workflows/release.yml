@@ -73,6 +73,14 @@ jobs:
           $license = Join-Path $ffmpeg.Directory.FullName LICENSE.txt
           if (Test-Path $license) { Copy-Item $license ffmpeg/ }
 
+      - name: Set app version
+        if: steps.check.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          Set-Content -Path src/app/version.py -Value "__version__ = `"$env:VERSION`""
+
       - name: Build app
         if: steps.check.outputs.skip != 'true'
         run: pyinstaller --noconfirm DCVideoSplitter.spec

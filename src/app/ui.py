@@ -18,6 +18,7 @@ from app.encoders import EncoderInfo, default_hidden_cpu_plans, probe_encoders
 from app.ffmpeg import ProbeError, VideoInfo, ffmpeg_available, probe_video
 from app.ffmpeg_download import download_ffmpeg
 from app.paths import ffmpeg_dir
+from app.version import __version__
 from app.profiles import (
     can_stream_copy_audio_to_mp4,
     audio_stream_copyable,
@@ -366,7 +367,7 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
         ctk.set_widget_scaling(UI_SCALE)
 
-        self.title("DC Video Splitter")
+        self.title(f"DC Video Splitter v{__version__}")
         self._drag_ghost_active = False
         self._ghost_frame: ctk.CTkFrame | None = None
         self._suppress_drag_ghost = False
@@ -587,10 +588,12 @@ class App(ctk.CTk):
         self._finish_close()
 
     def _finish_close(self) -> None:
-        if self.processing or self._ffmpeg_downloading:
-            self.after(100, self._finish_close)
+        if self.processing or self._ffmpeg_downloading or self._encoder_probing:
+            if self.winfo_exists():
+                self.after(100, self._finish_close)
             return
-        self.destroy()
+        if self.winfo_exists():
+            self.destroy()
 
     def _section(self, parent: ctk.CTkFrame, title: str) -> ctk.CTkFrame:
         frame = ctk.CTkFrame(parent)
@@ -1006,6 +1009,8 @@ class App(ctk.CTk):
             self.after(0, lambda e=str(exc): self._finish_encoder_probe(None, e))
 
     def _finish_encoder_probe(self, info: EncoderInfo | None, error: str | None) -> None:
+        if not self.winfo_exists():
+            return
         self._encoder_probing = False
         self._encoders_ready = True
         self.encoder_info = info

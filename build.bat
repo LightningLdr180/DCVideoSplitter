@@ -4,7 +4,10 @@ setlocal
 cd /d "%~dp0"
 
 set "ZIPNAME=DCVideoSplitter-win64.zip"
-if not "%~1"=="" set "ZIPNAME=DCVideoSplitter-%~1-win64.zip"
+if not "%~1"=="" (
+    set "ZIPNAME=DCVideoSplitter-%~1-win64.zip"
+    echo __version__ = "%~1" > src\app\version.py
+)
 
 if not exist "ffmpeg\ffmpeg.exe" (
     echo ERROR: ffmpeg\ffmpeg.exe not found.

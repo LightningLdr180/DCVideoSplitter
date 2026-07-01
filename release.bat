@@ -129,6 +129,30 @@ if errorlevel 1 exit /b 1
 goto published
 
 :ci_only
+call :find_gh
+if not errorlevel 1 (
+    gh auth status >nul 2>&1
+    if not errorlevel 1 goto ci_run
+)
+
+if defined GITHUB_TOKEN goto ci_run
+if defined GH_TOKEN goto ci_run
+if exist "%~dp0github-token.txt" goto ci_run
+
+echo.
+echo ERROR: Cannot trigger CI — no GitHub CLI login and no API token.
+echo.
+echo Option A — GitHub CLI ^(recommended^):
+echo   gh auth login -s repo,workflow
+echo   release.bat %VERSION% ci
+echo.
+echo Option B — Token file:
+echo   github-token.txt needs Actions: Read and write ^(fine-grained^)
+echo   or classic scopes: repo + workflow
+echo   release.bat %VERSION% ci
+exit /b 1
+
+:ci_run
 echo.
 echo Triggering GitHub Actions release build for %TAG%...
 
