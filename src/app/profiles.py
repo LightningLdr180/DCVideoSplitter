@@ -586,7 +586,7 @@ def clear_stem_outputs(output_dir: Path, stem: str) -> int:
     return removed
 
 
-def test_output_stem(
+def descriptive_output_stem(
     source_stem: str,
     resolution: Resolution,
     source_height: int,
@@ -597,7 +597,20 @@ def test_output_stem(
     res = _resolution_filename_tag(resolution, source_height, mode)
     tag = "split" if mode == "split" else codec
     br = "split" if mode == "split" else bitrate_mode
-    return f"test_{source_stem}_{res}_{tag}_{br}"
+    return f"{source_stem}_{res}_{tag}_{br}"
+
+
+def test_output_stem(
+    source_stem: str,
+    resolution: Resolution,
+    source_height: int,
+    mode: Mode,
+    codec: Codec,
+    bitrate_mode: BitrateMode = "balanced",
+) -> str:
+    return "test_" + descriptive_output_stem(
+        source_stem, resolution, source_height, mode, codec, bitrate_mode
+    )
 
 
 def _resolution_filename_tag(

@@ -24,6 +24,7 @@ from app.profiles import (
     clear_test_outputs,
     default_mode,
     default_resolution,
+    descriptive_output_stem,
     ensure_valid_bitrate_mode,
     ensure_valid_resolution,
     bitrate_mode_exceeds_source,
@@ -205,6 +206,7 @@ class App(ctk.CTk):
         self.codec = tk.StringVar(value="h264")
         self.show_cpu_encoders = tk.BooleanVar(value=False)
         self.gpu_two_pass = tk.BooleanVar(value=False)
+        self.descriptive_filenames = tk.BooleanVar(value=False)
         self.output_dir = tk.StringVar(value="")
         self._limit_chip_buttons: dict[float, ctk.CTkButton] = {}
         self._resolution_chip_buttons: dict[str, ctk.CTkButton] = {}
@@ -379,6 +381,22 @@ class App(ctk.CTk):
         ctk.CTkButton(out_row, text="Browse…", width=80, command=self._browse_output).pack(
             side="right"
         )
+        ctk.CTkCheckBox(
+            out_body,
+            text="Include resolution & codec in filenames",
+            variable=self.descriptive_filenames,
+            command=self._on_settings_changed,
+        ).pack(anchor="w", pady=(6, 0))
+        self.output_filename_hint = ctk.CTkLabel(
+            out_body,
+            text="",
+            anchor="w",
+            justify="left",
+            wraplength=SOURCE_COLUMN_WRAP,
+            text_color="gray",
+            font=ctk.CTkFont(size=12),
+        )
+        self.output_filename_hint.pack(anchor="w", pady=(4, 0))
 
         # --- Column 2: GPU detection, split limits ---
         gpu_body = self._section(col_system, "GPU & encoders")
@@ -1440,6 +1458,53 @@ class App(ctk.CTk):
             nudge = "Consider compressing — fewer parts to upload."
         self.nudge_label.configure(text=nudge)
 
+    def _update_output_filename_hint(self) -> None:
+        if not hasattr(self, "output_filename_hint"):
+            return
+        if not self.video_path:
+            self.output_filename_hint.configure(
+                text="Select a video to see an example filename."
+            )
+            return
+
+        stem = self.video_path.stem
+        mode = self.mode.get()  # type: ignore[assignment]
+        if self.descriptive_filenames.get() and self.video_info:
+            stem = descriptive_output_stem(
+                stem,
+                self.resolution.get(),  # type: ignore[arg-type]
+                self.video_info.height,
+                mode,
+                self.codec.get(),  # type: ignore[arg-type]
+                self.bitrate_mode.get(),  # type: ignore[arg-type]
+            )
+
+        if mode == "split" and not self.allow_split.get():
+            example = f"{stem}.mp4"
+        elif mode == "compress":
+            example = f"{stem}_compressed.mp4"
+        else:
+            example = f"{stem}_part001.mp4"
+            if self.video_info and self.allow_split.get():
+                mb = self.limit_mb.get()
+                v = self.video_info
+                if mode == "split":
+                    parts = estimate_split_parts(v.file_size, mb)
+                else:
+                    parts, _ = estimate_compress_plan(
+                        v.duration,
+                        self.resolution.get(),  # type: ignore[arg-type]
+                        self.codec.get(),  # type: ignore[arg-type]
+                        mb,
+                        source_video_bitrate_kbps(v.bitrate, v.duration, v.file_size),
+                        v.height,
+                        self.bitrate_mode.get(),  # type: ignore[arg-type]
+                    )
+                if parts > 1:
+                    example += f"  (+ {parts - 1} more)"
+
+        self.output_filename_hint.configure(text=f"Example: {example}")
+
     def _on_settings_changed(self) -> None:
         self._ensure_valid_bitrate()
         self._apply_compress_mode()
@@ -1448,6 +1513,7 @@ class App(ctk.CTk):
         self._update_plan_cards()
         self._update_nudges()
         self._update_action_buttons()
+        self._update_output_filename_hint()
 
     def _log(self, msg: str) -> None:
         self.log_box.insert("end", msg + "\n")
@@ -1525,31 +1591,42 @@ class App(ctk.CTk):
                     + "\n\nClose any programs using those files and try again.",
                 )
                 return
-        elif output_dir_has_existing_files(out_path, stem):
-            choice = messagebox.askyesnocancel(
-                "Existing output files",
-                (
-                    f"The output folder already contains files for '{stem}'.\n\n"
-                    "Yes — overwrite existing files\n"
-                    "No — use a new folder\n"
-                    "Cancel — abort"
-                ),
-            )
-            if choice is None:
-                return
-            if choice is True:
-                try:
-                    clear_stem_outputs(out_path, stem)
-                except OSError as exc:
-                    messagebox.showerror(
-                        "Error",
-                        _error_message(exc)
-                        + "\n\nClose any programs using those files and try again.",
-                    )
+        else:
+            output_stem = stem
+            if self.descriptive_filenames.get():
+                output_stem = descriptive_output_stem(
+                    stem,
+                    self.resolution.get(),  # type: ignore[arg-type]
+                    self.video_info.height,
+                    self.mode.get(),  # type: ignore[arg-type]
+                    self.codec.get(),  # type: ignore[arg-type]
+                    self.bitrate_mode.get(),  # type: ignore[arg-type]
+                )
+            if output_dir_has_existing_files(out_path, output_stem):
+                choice = messagebox.askyesnocancel(
+                    "Existing output files",
+                    (
+                        f"The output folder already contains files for '{output_stem}'.\n\n"
+                        "Yes — overwrite existing files\n"
+                        "No — use a new folder\n"
+                        "Cancel — abort"
+                    ),
+                )
+                if choice is None:
                     return
-            elif choice is False:
-                out_path = unique_output_dir(out_path)
-                self.output_dir.set(str(out_path))
+                if choice is True:
+                    try:
+                        clear_stem_outputs(out_path, output_stem)
+                    except OSError as exc:
+                        messagebox.showerror(
+                            "Error",
+                            _error_message(exc)
+                            + "\n\nClose any programs using those files and try again.",
+                        )
+                        return
+                elif choice is False:
+                    out_path = unique_output_dir(out_path)
+                    self.output_dir.set(str(out_path))
 
         opts = ProcessOptions(
             mode=self.mode.get(),  # type: ignore[arg-type]
@@ -1562,6 +1639,7 @@ class App(ctk.CTk):
             bitrate_mode=self.bitrate_mode.get(),  # type: ignore[arg-type]
             allow_split=self.allow_split.get(),
             gpu_two_pass=self.gpu_two_pass.get(),
+            descriptive_filenames=self.descriptive_filenames.get(),
         )
 
         self.processing = True

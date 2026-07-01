@@ -35,6 +35,7 @@ from app.profiles import (
     can_stream_copy_to_mp4,
     audio_stream_copyable,
     compute_compress_segments,
+    descriptive_output_stem,
     effective_video_bitrate_kbps,
     estimate_job_bytes,
     fits_single_compress,
@@ -97,6 +98,7 @@ class ProcessOptions:
     bitrate_mode: BitrateMode = "source"
     gpu_two_pass: bool = False
     allow_split: bool = True
+    descriptive_filenames: bool = False
 
 
 @dataclass
@@ -123,11 +125,15 @@ def _work_file_size(info: VideoInfo, opts: ProcessOptions) -> int:
 
 def _output_stem(info: VideoInfo, opts: ProcessOptions) -> str:
     base = _stem(info.path)
-    if opts.max_duration is None:
-        return base
-    return test_output_stem(
-        base, opts.resolution, info.height, opts.mode, opts.codec, opts.bitrate_mode
-    )
+    if opts.max_duration is not None:
+        return test_output_stem(
+            base, opts.resolution, info.height, opts.mode, opts.codec, opts.bitrate_mode
+        )
+    if opts.descriptive_filenames:
+        return descriptive_output_stem(
+            base, opts.resolution, info.height, opts.mode, opts.codec, opts.bitrate_mode
+        )
+    return base
 
 
 def _duration_input_args(opts: ProcessOptions) -> list[str]:
