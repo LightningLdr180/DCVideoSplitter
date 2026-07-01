@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ffmpeg | Out-Null
+          $zip = "ffmpeg-download.zip"
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath ffmpeg-tmp -Force
+          $ffmpeg = Get-ChildItem -Path ffmpeg-tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $ffmpeg) { throw "ffmpeg.exe not found in archive" }
+          Copy-Item $ffmpeg.FullName ffmpeg/
+          Copy-Item (Join-Path $ffmpeg.Directory.FullName ffprobe.exe) ffmpeg/
+          $license = Join-Path $ffmpeg.Directory.FullName LICENSE.txt
+          if (Test-Path $license) { Copy-Item $license ffmpeg/ }
+
+      - name: Build app
+        run: pyinstaller --noconfirm DCVideoSplitter.spec
+
+      - name: Package release zip
+        shell: cmd
+        run: |
+          set VERSION=%GITHUB_REF_NAME:v=%
+          set ZIPNAME=DCVideoSplitter-%VERSION%-win64.zip
+          if exist dist\DCVideoSplitter\ffmpeg rmdir /s /q dist\DCVideoSplitter\ffmpeg
+          mkdir dist\DCVideoSplitter\ffmpeg
+          copy /y ffmpeg\ffmpeg.exe dist\DCVideoSplitter\ffmpeg\
+          copy /y ffmpeg\ffprobe.exe dist\DCVideoSplitter\ffmpeg\
+          if exist ffmpeg\README.md copy /y ffmpeg\README.md dist\DCVideoSplitter\ffmpeg\
+          if exist ffmpeg\LICENSE.txt copy /y ffmpeg\LICENSE.txt dist\DCVideoSplitter\ffmpeg\
+          tar -a -c -f dist\%ZIPNAME% -C dist DCVideoSplitter
+          echo ZIP_NAME=%ZIPNAME%>> %GITHUB_ENV%
+
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.ZIP_NAME }}
+          generate_release_notes: true
