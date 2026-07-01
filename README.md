@@ -20,7 +20,7 @@ DCVideoSplitter/
     ffprobe.exe
 ```
 
-Keep `ffmpeg/` next to the `.exe` — the app needs it to run.
+Keep `ffmpeg/` next to the `.exe` — the app needs it to run. If FFmpeg is missing, the app will offer to download it automatically on first launch.
 
 ## How to use
 

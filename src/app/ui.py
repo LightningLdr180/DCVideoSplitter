@@ -13,7 +13,9 @@ import customtkinter as ctk
 
 from app.cancel import CancelToken, CancelledError
 from app.encoders import EncoderInfo, default_hidden_cpu_plans, probe_encoders
-from app.ffmpeg import ProbeError, VideoInfo, ensure_ffmpeg, probe_video
+from app.ffmpeg import ProbeError, VideoInfo, ffmpeg_available, probe_video
+from app.ffmpeg_download import download_ffmpeg
+from app.paths import ffmpeg_dir
 from app.profiles import (
     can_stream_copy_audio_to_mp4,
     audio_stream_copyable,
@@ -476,18 +478,69 @@ class App(ctk.CTk):
 
     def _init_encoders(self) -> None:
         self._encoders_ready = False
-        try:
-            ensure_ffmpeg()
-        except FileNotFoundError as exc:
-            self._encoders_ready = True
-            self.encoder_info = None
-            messagebox.showerror("FFmpeg not found", str(exc))
-            self._update_gpu_label()
-            self._update_action_buttons()
+        if not ffmpeg_available():
+            self._prompt_ffmpeg_download()
             return
 
         self._update_gpu_label()
         threading.Thread(target=self._probe_encoders_worker, daemon=True).start()
+
+    def _prompt_ffmpeg_download(self) -> None:
+        folder = ffmpeg_dir()
+        if messagebox.askyesno(
+            "FFmpeg not found",
+            "FFmpeg is required but was not found in:\n"
+            f"{folder}\n\n"
+            "Download and install it automatically now?\n"
+            "(~160 MB, Windows 64-bit build from BtbN FFmpeg Builds)",
+        ):
+            self._show_log_frame()
+            self._log(f"FFmpeg missing — downloading to {folder}")
+            self._set_status("Downloading FFmpeg…", None)
+            self.progress.stop()
+            self.progress.configure(mode="indeterminate")
+            self.progress.start()
+            threading.Thread(target=self._download_ffmpeg_worker, daemon=True).start()
+            return
+
+        self._encoders_ready = True
+        self.encoder_info = None
+        self._update_gpu_label()
+        self._update_action_buttons()
+
+    def _download_ffmpeg_worker(self) -> None:
+        try:
+
+            def on_progress(msg: str) -> None:
+                self.after(0, lambda m=msg: self._set_status(m, None))
+
+            download_ffmpeg(on_progress)
+            self.after(0, self._on_ffmpeg_download_done)
+        except Exception as exc:
+            self.after(0, lambda e=exc: self._on_ffmpeg_download_failed(e))
+
+    def _on_ffmpeg_download_done(self) -> None:
+        self.progress.stop()
+        self.progress.configure(mode="determinate")
+        self.progress.set(1.0)
+        self._log(f"FFmpeg installed in {ffmpeg_dir()}")
+        self._set_status("FFmpeg installed.", 1.0)
+        self._init_encoders()
+
+    def _on_ffmpeg_download_failed(self, exc: BaseException) -> None:
+        self.progress.stop()
+        self.progress.configure(mode="determinate")
+        self.progress.set(0)
+        self._encoders_ready = True
+        self.encoder_info = None
+        msg = _error_message(exc)
+        self._log(f"FFmpeg download failed: {msg}")
+        messagebox.showerror(
+            "FFmpeg download failed",
+            msg + f"\n\nInstall manually into:\n{ffmpeg_dir()}",
+        )
+        self._update_gpu_label()
+        self._update_action_buttons()
 
     def _probe_encoders_worker(self) -> None:
         try:
@@ -520,10 +573,19 @@ class App(ctk.CTk):
             return
         info = self.encoder_info
         if info is None:
-            self.gpu_text.configure(
-                text="Encoder detection failed — is FFmpeg installed?",
-                text_color="#e07070",
-            )
+            if not ffmpeg_available():
+                self.gpu_text.configure(
+                    text=(
+                        f"FFmpeg not found in {ffmpeg_dir()}.\n"
+                        "Restart the app to download, or add ffmpeg.exe and ffprobe.exe manually."
+                    ),
+                    text_color="#e07070",
+                )
+            else:
+                self.gpu_text.configure(
+                    text="Encoder detection failed — is FFmpeg installed?",
+                    text_color="#e07070",
+                )
             return
 
         text = "\n".join(info.hardware_summary_lines())

@@ -12,6 +12,11 @@ from typing import Callable, Optional
 from app.cancel import CancelToken, CancelledError, stop_process
 from app.paths import ffmpeg_dir, ffmpeg_path, ffprobe_path
 
+
+def ffmpeg_available() -> bool:
+    return ffmpeg_path().is_file() and ffprobe_path().is_file()
+
+
 CREATE_NO_WINDOW = 0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 
 
