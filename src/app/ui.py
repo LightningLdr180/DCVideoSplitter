@@ -115,6 +115,31 @@ def _ui(n: float) -> int:
     return max(1, round(n * UI_SCALE))
 
 
+def _stabilize_scrollable_frame(frame: ctk.CTkScrollableFrame) -> None:
+    """Debounce CTkScrollableFrame layout updates during window move/resize."""
+    state: dict[str, int | None] = {"after_id": None, "last_w": 0, "last_h": 0}
+
+    def _on_configure(event: tk.Event) -> None:
+        if event.widget is not frame:
+            return
+        w, h = event.width, event.height
+        if w == state["last_w"] and h == state["last_h"]:
+            return
+        state["last_w"], state["last_h"] = w, h
+        if state["after_id"] is not None:
+            frame.after_cancel(state["after_id"])
+
+        def _update_scrollregion() -> None:
+            state["after_id"] = None
+            canvas = frame._parent_canvas
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        state["after_id"] = frame.after(32, _update_scrollregion)
+
+    frame.unbind("<Configure>")
+    frame.bind("<Configure>", _on_configure)
+
+
 # Right panel: unified processing plans (mode + codec in one choice)
 PROCESSING_PLANS: tuple[tuple[str, str, str], ...] = (
     ("split", "Split only", "Fast · no re-encode"),
@@ -146,6 +171,9 @@ BITRATE_PRESETS: tuple[tuple[str, str], ...] = (
 
 class App(ctk.CTk):
     def __init__(self) -> None:
+        # CustomTkinter polls DPI every 100ms and rescales all widgets when the window
+        # crosses monitors — that causes visible jitter. Fixed UI_SCALE is enough for us.
+        ctk.deactivate_automatic_dpi_awareness()
         super().__init__()
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
@@ -296,6 +324,7 @@ class App(ctk.CTk):
 
         self.content_scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.content_scroll.pack(fill="both", expand=True, padx=12, pady=(10, 4))
+        _stabilize_scrollable_frame(self.content_scroll)
 
         self.main_frame = ctk.CTkFrame(self.content_scroll, fg_color="transparent")
         self.main_frame.pack(fill="x", anchor="n")
@@ -357,6 +386,7 @@ class App(ctk.CTk):
             gpu_body, height=GPU_SCROLL_HEIGHT, fg_color="transparent"
         )
         gpu_scroll.pack(fill="x")
+        _stabilize_scrollable_frame(gpu_scroll)
         self.gpu_text = ctk.CTkLabel(
             gpu_scroll,
             text="Detecting GPU encoders…",
